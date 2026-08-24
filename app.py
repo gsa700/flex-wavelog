@@ -15,6 +15,7 @@ import json
 import logging
 import logging.handlers
 import os
+import sys
 import threading
 import time
 
@@ -25,29 +26,61 @@ import flex_wavelog as fw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_HTML = os.path.join(HERE, "ui", "prefs.html")
+# WebView2 profile. Without a persistent store the Wavelog session is thrown
+# away on exit and you log in again on every launch.
+STORAGE_PATH = os.path.join(HERE, ".webview")
 
 log = logging.getLogger("flex-wavelog.app")
+
+
+def set_dpi_awareness():
+    """Declare per-monitor DPI awareness before any window exists.
+
+    Windows draws a non-aware process at 96 DPI and stretches the result. The
+    visible symptom here was subtler: the first window looked fine until a
+    second was created, at which point WebView2's layout viewport and the
+    form's client area disagreed and the page collapsed into narrow columns.
+    No-op anywhere but Windows.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+    for attempt in (
+        lambda: ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)),
+        lambda: ctypes.windll.shcore.SetProcessDpiAwareness(2),
+        lambda: ctypes.windll.user32.SetProcessDPIAware(),
+    ):
+        try:
+            if attempt():
+                return
+        except Exception:
+            continue
 
 
 class Api:
     """Bound into the prefs page as pywebview.api.*"""
 
     def __init__(self, app):
-        self.app = app
+        # Underscore-prefixed deliberately: pywebview walks the public attributes
+        # of the js_api object to expose them, and a plain self.app would lead it
+        # into App -> main_window -> .native (a WinForms Form) and recurse through
+        # the .NET object graph until it blew the stack, taking the whole bridge
+        # down with it. Private names are skipped.
+        self._app = app
 
     def get_config(self):
-        cfg = dict(self.app.cfg)
+        cfg = dict(self._app.cfg)
         # The token is never handed to the page. The field renders as a
         # placeholder and only a non-empty submission replaces what's stored.
         cfg["api_token"] = ""
-        cfg["token_is_set"] = bool(self.app.cfg.get("api_token"))
+        cfg["token_is_set"] = bool(self._app.cfg.get("api_token"))
         names = cfg.get("radio_names") or {}
         cfg["radio_A"] = names.get("A", "")
         cfg["radio_B"] = names.get("B", "")
         return cfg
 
     def save_config(self, incoming):
-        cfg = dict(self.app.cfg)
+        cfg = dict(self._app.cfg)
 
         for key in ("flex_host", "wavelog_url"):
             value = (incoming.get(key) or "").strip()
@@ -91,13 +124,13 @@ class Api:
 
         with open(fw.CONFIG_PATH, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=2)
-        self.app.cfg = cfg
-        self.app.restart_bridge()
+        self._app.cfg = cfg
+        self._app.restart_bridge()
         log.info("Config saved; bridge restarted")
         return {"ok": True}
 
     def get_status(self):
-        bridge = self.app.bridge
+        bridge = self._app.bridge
         if bridge is None:
             return {"connected": False, "error": "bridge not running", "radios": {}}
         now = time.time()
@@ -112,7 +145,7 @@ class Api:
         }
 
     def quit(self):
-        self.app.quit()
+        self._app.quit()
 
 
 class App:
@@ -190,6 +223,8 @@ def main():
             fw.LOG_PATH, maxBytes=1_000_000, backupCount=3, encoding="utf-8")],
     )
 
+    set_dpi_awareness()
+
     app = App()
     app.start_bridge()
 
@@ -203,7 +238,8 @@ def main():
         MenuAction("Quit", app.quit),
     ])]
 
-    webview.start(menu=menu)
+    # private_mode=False + a storage_path keeps the Wavelog login across runs.
+    webview.start(menu=menu, private_mode=False, storage_path=STORAGE_PATH)
 
 
 if __name__ == "__main__":

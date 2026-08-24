@@ -99,12 +99,18 @@ const $ = id => document.getElementById(id);
 const FIELDS = ["flex_host","flex_port","wavelog_url","radio_A","radio_B",
                 "tx_radio_name","heartbeat_seconds","min_post_interval"];
 
+function apiError(where, err) {
+  const el = $("msg");
+  el.textContent = where + " failed: " + err;
+  el.style.color = "var(--bad)";
+}
+
 function loadConfig() {
   window.pywebview.api.get_config().then(cfg => {
     FIELDS.forEach(f => { if (cfg[f] !== null && cfg[f] !== undefined) $(f).value = cfg[f]; });
     $("send_power").checked = !!cfg.send_power;
     $("api_token").placeholder = cfg.token_is_set ? "•••••••• (stored)" : "wl2_…";
-  });
+  }).catch(e => apiError("get_config", e));
 }
 
 function fmtFreq(hz) {
@@ -141,7 +147,7 @@ function renderStatus(s) {
 }
 
 function poll() {
-  window.pywebview.api.get_status().then(renderStatus).catch(() => {});
+  window.pywebview.api.get_status().then(renderStatus).catch(e => apiError("get_status", e));
 }
 
 function flash(text, ok) {
@@ -162,11 +168,24 @@ $("save").addEventListener("click", () => {
 
 $("quit").addEventListener("click", () => window.pywebview.api.quit());
 
-window.addEventListener("pywebviewready", () => {
+let started = false;
+function init() {
+  if (started) return;
+  started = true;
   loadConfig();
   poll();
   setInterval(poll, 2000);
-});
+}
+
+// pywebviewready may already have fired by the time this inline script runs -
+// a small local file loads fast enough to lose that race, and the symptom is a
+// page that renders perfectly with every field empty. So check for the API
+// first and only fall back to waiting for the event.
+if (window.pywebview && window.pywebview.api) {
+  init();
+} else {
+  window.addEventListener("pywebviewready", init);
+}
 </script>
 </body>
 </html>

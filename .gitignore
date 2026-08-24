@@ -2,6 +2,7 @@
 config.json
 
 # Runtime
+.webview/
 *.log
 *.log.*
 __pycache__/
