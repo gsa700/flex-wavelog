@@ -92,8 +92,31 @@ $lnk.TargetPath = $pythonw
 $lnk.Arguments = "`"$AppPy`""
 $lnk.WorkingDirectory = $Root
 $lnk.Description = 'Wavelog with the FlexRadio CAT bridge'
+$icon = Join-Path $Root 'assets\flex-wavelog.ico'
+if (Test-Path $icon) { $lnk.IconLocation = "$icon,0" }
 $lnk.Save()
 Say "Start Menu shortcut created"
+
+# --- Add/Remove Programs entry ------------------------------------------------
+# Per-user (HKCU), so no admin rights - and anything that registers an autostart
+# task ought to be discoverable in Settings > Apps for removal.
+$version = '0.0.0'
+$verLine = Select-String -Path (Join-Path $Root 'flex_wavelog.py') -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
+if ($verLine) { $version = $verLine.Matches[0].Groups[1].Value }
+
+$arp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Flex-Wavelog'
+New-Item -Path $arp -Force | Out-Null
+$size = [int]((Get-ChildItem $Root -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1KB)
+Set-ItemProperty -Path $arp -Name DisplayName -Value 'Flex-Wavelog'
+Set-ItemProperty -Path $arp -Name DisplayVersion -Value $version
+Set-ItemProperty -Path $arp -Name Publisher -Value 'flex-wavelog project'
+Set-ItemProperty -Path $arp -Name InstallLocation -Value $Root
+Set-ItemProperty -Path $arp -Name DisplayIcon -Value $(if (Test-Path $icon) { $icon } else { $pythonw })
+Set-ItemProperty -Path $arp -Name UninstallString -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Root 'uninstall.ps1')`""
+Set-ItemProperty -Path $arp -Name EstimatedSize -Value $size -Type DWord
+Set-ItemProperty -Path $arp -Name NoModify -Value 1 -Type DWord
+Set-ItemProperty -Path $arp -Name NoRepair -Value 1 -Type DWord
+Say "Registered in Add/Remove Programs (v$version)"
 
 Write-Host "`nDone.`n"
 Write-Host "Next steps:"

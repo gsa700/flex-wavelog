@@ -77,6 +77,15 @@ if (Test-Path $webview) {
     Say "WebView2 profile not present"
 }
 
+# --- Add/Remove Programs entry --------------------------------------------------
+$arp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Flex-Wavelog'
+if (Test-Path $arp) {
+    Remove-Item $arp -Recurse -Force
+    Say "Add/Remove Programs entry removed"
+} else {
+    Say "Add/Remove Programs entry not present"
+}
+
 # --- Logs ---------------------------------------------------------------------
 $logs = Get-ChildItem $Root -Filter 'flex_wavelog.log*' -ErrorAction SilentlyContinue
 if ($logs) {

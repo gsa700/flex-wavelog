@@ -27,11 +27,36 @@ import flex_wavelog as fw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_HTML = os.path.join(HERE, "ui", "prefs.html")
+ICON_PATH = os.path.join(HERE, "assets", "flex-wavelog.ico")
 # WebView2 profile. Without a persistent store the Wavelog session is thrown
 # away on exit and you log in again on every launch.
 STORAGE_PATH = os.path.join(HERE, ".webview")
 
 log = logging.getLogger("flex-wavelog.app")
+
+
+def set_window_icon(window):
+    """Put our icon on a window's title bar and taskbar entry (Windows only).
+
+    pywebview's `icon` parameter is GTK/QT-only, but on the edgechromium
+    backend `window.native` is a WinForms Form whose Icon property we can set
+    directly. The set is marshalled through Form.Invoke because the event that
+    triggers this does not fire on the UI thread, and WinForms throws on
+    cross-thread property access. Purely cosmetic, so failure is logged and
+    swallowed rather than allowed to take the app down.
+    """
+    if sys.platform != "win32" or not os.path.exists(ICON_PATH):
+        return
+    try:
+        import clr
+        clr.AddReference("System.Drawing")
+        from System import Action
+        from System.Drawing import Icon
+
+        form = window.native
+        form.Invoke(Action(lambda: setattr(form, "Icon", Icon(ICON_PATH))))
+    except Exception as err:
+        log.warning("Could not set window icon: %s", err)
 
 
 def set_dpi_awareness():
@@ -205,6 +230,8 @@ class App:
                 "Preferences and Status", PREFS_HTML,
                 js_api=self.api, width=820, height=760)
             self.prefs_window.events.closed += self._prefs_closed
+            self.prefs_window.events.shown += (
+                lambda: set_window_icon(self.prefs_window))
         else:
             self.prefs_window.show()
 
@@ -248,6 +275,7 @@ def main():
         app.main_window = webview.create_window(
             "Wavelog", app.cfg["wavelog_url"], width=1280, height=860)
         app.main_window.events.closing += app.on_main_closing
+        app.main_window.events.shown += lambda: set_window_icon(app.main_window)
 
         menu = [Menu("Flex-Wavelog", [
             MenuAction("Preferences and Status", app.open_prefs),
