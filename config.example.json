@@ -1,0 +1,14 @@
+{
+  "flex_host": "192.168.1.50",
+  "flex_port": 4992,
+  "wavelog_url": "http://192.168.1.10",
+  "api_token": "PASTE_YOUR_WL2_TOKEN_HERE",
+  "radio_names": {
+    "A": "Radio A",
+    "B": "Radio B"
+  },
+  "tx_radio_name": "Radio TX",
+  "heartbeat_seconds": 5,
+  "min_post_interval": 1.0,
+  "send_power": true
+}

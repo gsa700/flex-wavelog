@@ -1,0 +1,3 @@
+# Only needed for app.py (the desktop shell).
+# flex_wavelog.py runs headless on the standard library alone.
+pywebview>=6.0

@@ -1,0 +1,10 @@
+# Contains the live Wavelog API token in cleartext - never commit.
+config.json
+
+# Runtime
+*.log
+*.log.*
+__pycache__/
+*.py[cod]
+.venv/
+venv/
