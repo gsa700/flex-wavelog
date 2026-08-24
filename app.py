@@ -239,6 +239,7 @@ def main():
     # Everything past here runs under pythonw with no stderr, so an uncaught
     # exception would kill the app leaving nothing but a task exit code. Log it.
     try:
+        log.info("flex-wavelog %s starting", fw.__version__)
         set_dpi_awareness()
 
         app = App()

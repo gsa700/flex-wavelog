@@ -32,6 +32,25 @@ slice you're merely listening on would put a falsehood in your log.
 
 ## Setup
 
+### Windows
+
+```
+.\install.ps1
+```
+
+A readable script, not a packaged binary — an unsigned PyInstaller .exe gets
+flagged by antivirus on download reputation alone, which is exactly why small
+ham utilities so often look untrustworthy. Read the script first; that's the
+point of it. It checks Python 3.9+, installs dependencies, seeds `config.json`,
+registers a logon-time scheduled task, and adds a Start Menu shortcut. Requires
+no admin rights, safe to re-run, never overwrites an existing config.
+
+`.\uninstall.ps1` removes all of it — including the scheduled task and the
+`.webview` profile (which holds a live Wavelog session cookie). `config.json`
+is kept unless you pass `-Purge`, because it contains your API token.
+
+### Manual / other platforms
+
 ```
 pip install -r requirements.txt          # only for app.py
 cp config.example.json config.json       # then edit, or use the Preferences window

@@ -25,6 +25,8 @@ import time
 import urllib.error
 import urllib.request
 
+__version__ = "0.1.0"
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
 LOG_PATH = os.path.join(HERE, "flex_wavelog.log")
