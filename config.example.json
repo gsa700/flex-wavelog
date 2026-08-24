@@ -10,5 +10,6 @@
   "tx_radio_name": "Radio TX",
   "heartbeat_seconds": 5,
   "min_post_interval": 1.0,
-  "send_power": true
+  "send_power": true,
+  "amp_power_watts": 1000
 }

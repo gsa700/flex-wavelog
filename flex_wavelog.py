@@ -50,6 +50,9 @@ DEFAULT_CONFIG = {
     # Floor between POSTs for a single radio, so fast tuning can't hammer the API.
     "min_post_interval": 1.0,
     "send_power": True,
+    # Nominal output to log while the amplifier is out of standby. Drive power
+    # from the radio is used whenever it is in standby.
+    "amp_power_watts": 1000,
 }
 
 # Flex reports rig modes; Wavelog's MODE_OVERRIDES doesn't know the DIG* ones and
@@ -160,10 +163,11 @@ class FlexBridge:
         self.cfg = cfg
         self.wavelog = WavelogClient(cfg, dry_run=dry_run)
         self.slices = {}        # slice index -> merged attribute dict
+        self.amplifiers = {}    # amp handle -> merged attribute dict
         self.rfpower = None
         self.last_sent = {}     # radio name -> (payload, monotonic timestamp)
         # Read by the GUI to render live status; harmless when running headless.
-        self.status = {"connected": False, "error": None, "radios": {}}
+        self.status = {"connected": False, "error": None, "radios": {}, "amp": None}
         self.stop_requested = False
 
     # -- Flex protocol ----------------------------------------------------
@@ -178,7 +182,7 @@ class FlexBridge:
         self.slices.clear()
         self.last_sent.clear()
         seq = 1
-        for cmd in ("sub slice all", "sub tx all"):
+        for cmd in ("sub slice all", "sub tx all", "sub amplifier all"):
             sock.sendall(f"C{seq}|{cmd}\n".encode())
             seq += 1
         self.status["connected"] = True
@@ -211,6 +215,11 @@ class FlexBridge:
             tx = parse_kv(body[len("transmit "):])
             if "rfpower" in tx:
                 self.rfpower = tx["rfpower"]
+        elif body.startswith("amplifier "):
+            rest = body[len("amplifier "):]
+            handle_id, _, attrs = rest.partition(" ")
+            # Incremental like slices - a state change arrives on its own.
+            self.amplifiers.setdefault(handle_id, {}).update(parse_kv(attrs))
 
     # -- Wavelog side -----------------------------------------------------
 
@@ -227,12 +236,52 @@ class FlexBridge:
         # Power belongs to whichever slice is actually transmitting - which is
         # always true for the tx-follower entry, and true for A or B only while
         # that slice holds the transmitter.
-        if self.cfg["send_power"] and self.rfpower and attrs.get("tx") == "1":
-            try:
-                payload["power"] = int(float(self.rfpower))
-            except ValueError:
-                pass
+        if self.cfg["send_power"] and attrs.get("tx") == "1":
+            watts = self.tx_power_watts()
+            if watts:
+                payload["power"] = watts
         return payload
+
+    def amp_state(self):
+        """Current state string of the Power Genius, or None if there isn't one.
+
+        The Flex publishes each amplifier as a control object. The Tuner Genius
+        appears here too, so match on model rather than taking the first entry.
+        """
+        for attrs in self.amplifiers.values():
+            if "PowerGenius" in (attrs.get("model") or ""):
+                return (attrs.get("state") or "").upper() or None
+        return None
+
+    def tx_power_watts(self):
+        """Nominal power to log.
+
+        ADIF TX_PWR is a nominal figure, not an instantaneous sample - reading
+        forward power at the moment of save would capture wherever the envelope
+        happened to be, which on SSB is close to meaningless. So: the amp's
+        configured output when the PGXL is in line, the radio's drive power when
+        it is in standby.
+
+        Observed states are STANDBY (out of line) and IDLE (in line, not keyed).
+        The test is deliberately negative - only STANDBY counts as out of line -
+        because the failure modes are not symmetric. Treating an unknown state as
+        in-line over-reports drive power as amp power; testing positively for a
+        state name would silently log a kilowatt as 33 W the first time the
+        firmware used a word this code had not seen. IDLE was in fact the first
+        such surprise.
+        """
+        state = self.amp_state()
+        if state is not None and state != "STANDBY":
+            try:
+                return int(float(self.cfg.get("amp_power_watts") or 0)) or None
+            except (TypeError, ValueError):
+                return None
+        if self.rfpower:
+            try:
+                return int(float(self.rfpower)) or None
+            except ValueError:
+                return None
+        return None
 
     def payloads(self):
         """Every radio entry this tick should consider, keyed by radio name."""
@@ -261,6 +310,10 @@ class FlexBridge:
         now = time.monotonic()
         heartbeat = self.cfg["heartbeat_seconds"]
         floor = self.cfg["min_post_interval"]
+        state = self.amp_state()
+        if state != self.status["amp"]:
+            log.info("Amplifier state: %s", state or "not present")
+        self.status["amp"] = state
         for name, payload in self.payloads().items():
             prev, sent_at = self.last_sent.get(name, (None, 0.0))
             changed = payload != prev

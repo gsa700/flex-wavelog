@@ -61,6 +61,7 @@
 <div class="panel">
   <h2>Bridge status</h2>
   <div><span class="dot" id="dot" style="background:var(--muted)"></span><span class="state" id="state">starting…</span></div>
+  <div id="amp" class="hint"></div>
   <div id="radios"><p class="empty">No radios reported yet.</p></div>
 </div>
 
@@ -72,8 +73,10 @@
     <label for="radio_A">Slice A name</label><input type="text" id="radio_A">
     <label for="radio_B">Slice B name</label><input type="text" id="radio_B">
     <label for="tx_radio_name">TX follower name</label><input type="text" id="tx_radio_name">
+    <label for="amp_power_watts">Amp output (W)</label><input type="number" id="amp_power_watts" min="0" step="10">
   </div>
   <p class="hint">The TX follower mirrors whichever slice currently holds the transmitter — select it in Wavelog and it tracks SO2R on its own. Leave blank to disable.</p>
+  <p class="hint">Amp output is logged whenever the Power Genius is out of standby; the radio's drive power is logged when it isn't. ADIF wants a nominal figure, so this is a number you set, not a live sample.</p>
 </div>
 
 <div class="panel">
@@ -97,7 +100,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const FIELDS = ["flex_host","flex_port","wavelog_url","radio_A","radio_B",
-                "tx_radio_name","heartbeat_seconds","min_post_interval"];
+                "tx_radio_name","amp_power_watts","heartbeat_seconds","min_post_interval"];
 
 function apiError(where, err) {
   const el = $("msg");
@@ -130,6 +133,13 @@ function renderStatus(s) {
     ? "Connected to radio"
     : ("Disconnected" + (s.error ? " — " + s.error : ""));
   $("state").style.color = connected ? "var(--ok)" : "var(--bad)";
+
+  const amp = s.amp;
+  $("amp").textContent = !amp
+    ? "No Power Genius detected — logging radio drive power."
+    : amp === "STANDBY"
+      ? "Amplifier STANDBY — logging radio drive power."
+      : "Amplifier " + amp + " — logging configured amp output.";
 
   const names = Object.keys(s.radios).sort();
   if (!names.length) {

@@ -96,6 +96,7 @@ class Api:
             cfg["flex_port"] = int(incoming.get("flex_port") or 4992)
             cfg["heartbeat_seconds"] = float(incoming.get("heartbeat_seconds") or 5)
             cfg["min_post_interval"] = float(incoming.get("min_post_interval") or 1)
+            cfg["amp_power_watts"] = int(incoming.get("amp_power_watts") or 0)
         except (TypeError, ValueError):
             return {"ok": False, "error": "Port and interval fields must be numbers"}
 
@@ -141,6 +142,7 @@ class Api:
         return {
             "connected": bridge.status["connected"],
             "error": bridge.status["error"],
+            "amp": bridge.status.get("amp"),
             "radios": radios,
         }
 

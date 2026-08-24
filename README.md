@@ -68,6 +68,16 @@ Things that cost real time to work out, recorded so they don't have to be again:
   state must be merged, not replaced.
 - Wavelog marks a radio stale if its timestamp stops moving, hence the heartbeat
   resending unchanged state every few seconds.
+- **Amplifier state comes free over the same connection.** `sub amplifier all`
+  reports a Power Genius XL without needing its telnet credentials, so logged
+  power can follow the amp: configured output when it is in line, radio drive
+  power when it is in standby. Match on `model` — a Tuner Genius appears in the
+  same list. Observed states are `STANDBY` and `IDLE`; test *negatively* against
+  STANDBY rather than positively for an in-line state name, or an unrecognised
+  state silently logs a kilowatt as drive power.
+- Real forward power *is* available (`FWD`, `src=AMP`, in dBm), but meter values
+  stream over UDP VITA-49 rather than the text API — and ADIF wants nominal
+  power anyway, so an instantaneous sample would be worse, not better.
 
 ## Desktop shell
 
