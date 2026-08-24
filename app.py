@@ -18,6 +18,7 @@ import os
 import sys
 import threading
 import time
+import webbrowser
 
 import webview
 from webview.menu import Menu, MenuAction, MenuSeparator
@@ -188,6 +189,16 @@ class App:
 
     # -- windows ----------------------------------------------------------
 
+    def open_in_browser(self):
+        """Hand the Wavelog URL to the system default browser.
+
+        The embedded engine is WebView2 (Chromium) and there is no Firefox
+        equivalent to embed - Mozilla dropped embedding APIs years ago. So when
+        a Wavelog admin screen misbehaves under Chromium, the escape hatch is to
+        open it in the real browser rather than to change engines.
+        """
+        webbrowser.open(self.cfg["wavelog_url"])
+
     def open_prefs(self):
         if self.prefs_window is None:
             self.prefs_window = webview.create_window(
@@ -225,23 +236,38 @@ def main():
             fw.LOG_PATH, maxBytes=1_000_000, backupCount=3, encoding="utf-8")],
     )
 
-    set_dpi_awareness()
+    # Everything past here runs under pythonw with no stderr, so an uncaught
+    # exception would kill the app leaving nothing but a task exit code. Log it.
+    try:
+        set_dpi_awareness()
 
-    app = App()
-    app.start_bridge()
+        app = App()
+        app.start_bridge()
 
-    app.main_window = webview.create_window(
-        "Wavelog", app.cfg["wavelog_url"], width=1280, height=860)
-    app.main_window.events.closing += app.on_main_closing
+        app.main_window = webview.create_window(
+            "Wavelog", app.cfg["wavelog_url"], width=1280, height=860)
+        app.main_window.events.closing += app.on_main_closing
 
-    menu = [Menu("Flex-Wavelog", [
-        MenuAction("Preferences and Status", app.open_prefs),
-        MenuSeparator(),
-        MenuAction("Quit", app.quit),
-    ])]
+        menu = [Menu("Flex-Wavelog", [
+            MenuAction("Preferences and Status", app.open_prefs),
+            MenuAction("Open Wavelog in Browser", app.open_in_browser),
+            MenuSeparator(),
+            MenuAction("Quit", app.quit),
+        ])]
 
-    # private_mode=False + a storage_path keeps the Wavelog login across runs.
-    webview.start(menu=menu, private_mode=False, storage_path=STORAGE_PATH)
+        # devtools:true in config.json enables right-click Inspect in both
+        # windows, which is the only way to see why WebView2 rejects a form the
+        # server never hears about.
+        debug = bool(app.cfg.get("devtools"))
+        if debug:
+            log.info("devtools enabled - right-click a window and choose Inspect")
+
+        # private_mode=False + storage_path keeps the Wavelog login across runs.
+        webview.start(menu=menu, private_mode=False,
+                      storage_path=STORAGE_PATH, debug=debug)
+    except Exception:
+        log.exception("Fatal error - app is exiting")
+        raise
 
 
 if __name__ == "__main__":

@@ -76,7 +76,10 @@ def load_config(require_key=True):
             json.dump(DEFAULT_CONFIG, fh, indent=2)
         log.error("Wrote a starter config to %s - add your API key and rerun.", CONFIG_PATH)
         sys.exit(1)
-    with open(CONFIG_PATH, encoding="utf-8") as fh:
+    # utf-8-sig, not utf-8: a UTF-8 BOM is invisible in every editor and makes
+    # json.load fail at char 0 with a message that points nowhere useful. Windows
+    # tools write one readily - Notepad, and PowerShell 5.1's -Encoding utf8.
+    with open(CONFIG_PATH, encoding="utf-8-sig") as fh:
         cfg = json.load(fh)
     for key, val in DEFAULT_CONFIG.items():
         cfg.setdefault(key, val)
