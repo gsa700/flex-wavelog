@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -38,6 +38,17 @@ TOKEN_PREFIX = "wl2_"
 DEFAULT_CONFIG = {
     # Example values - config.json is written from these on first run and is
     # expected to be edited (or filled in from the app's Preferences window).
+    #
+    # Which CAT backend feeds Wavelog. "flex" speaks the FlexRadio TCP API
+    # natively (slices, SO2R TX-follow, PGXL state). "rigctld" polls a hamlib
+    # rigctld daemon instead - one rig, one Wavelog entry, but it covers every
+    # rig hamlib speaks. Run rigctld yourself (it ships with hamlib and with
+    # WSJT-X) and point these at it.
+    "radio_backend": "flex",
+    "rigctld_host": "127.0.0.1",
+    "rigctld_port": 4532,
+    "rigctld_radio_name": "Rig",
+    "rigctld_poll_seconds": 1.0,
     "flex_host": "192.168.1.50",
     "flex_port": 4992,
     "wavelog_url": "http://192.168.1.10",
@@ -80,6 +91,17 @@ MODE_MAP = {
     "SAM": "AM",
     "NFM": "FM",
     "DFM": "FM",
+}
+
+# Hamlib's mode vocabulary, where it differs from what Wavelog understands.
+# Same policy as MODE_MAP: data-on-sideband logs as the sideband, digital QSOs
+# get their true mode from the WSJT-X logging path.
+RIGCTLD_MODE_MAP = {
+    "PKTUSB": "USB",
+    "PKTLSB": "LSB",
+    "PKTFM": "FM",
+    "CWR": "CW",
+    "RTTYR": "RTTY",
 }
 
 log = logging.getLogger("flex-wavelog")
@@ -414,17 +436,55 @@ class WsjtxListener(threading.Thread):
                 pass
 
 
-class FlexBridge:
+class BridgeCore:
+    """What every radio backend shares: throttled publishing into Wavelog.
+
+    A backend subclasses this, produces {radio name: payload} dicts however its
+    rig's protocol works, and hands them to publish_payloads() - which owns the
+    change detection, the heartbeat, the rate floor, and the status the GUI
+    renders. Backends differ only in where payloads come from.
+    """
+
     def __init__(self, cfg, dry_run=False):
         self.cfg = cfg
         self.wavelog = WavelogClient(cfg, dry_run=dry_run)
-        self.slices = {}        # slice index -> merged attribute dict
-        self.amplifiers = {}    # amp handle -> merged attribute dict
-        self.rfpower = None
         self.last_sent = {}     # radio name -> (payload, monotonic timestamp)
         # Read by the GUI to render live status; harmless when running headless.
         self.status = {"connected": False, "error": None, "radios": {}, "amp": None}
         self.stop_requested = False
+
+    def publish_payloads(self, payload_map):
+        now = time.monotonic()
+        heartbeat = self.cfg["heartbeat_seconds"]
+        floor = self.cfg["min_post_interval"]
+        for name, payload in payload_map.items():
+            prev, sent_at = self.last_sent.get(name, (None, 0.0))
+            changed = payload != prev
+            due = (now - sent_at) >= heartbeat
+            if not (changed or due):
+                continue
+            if changed and (now - sent_at) < floor:
+                continue    # tuning fast; let it settle
+            if self.wavelog.post(payload):
+                if changed:
+                    log.info("%s -> %.6f MHz %s", name,
+                             payload["frequency"] / 1_000_000,
+                             payload.get("mode", "?"))
+                self.last_sent[name] = (payload, now)
+                self.status["radios"][name] = {
+                    "frequency": payload["frequency"],
+                    "mode": payload.get("mode"),
+                    "power": payload.get("power"),
+                    "updated": time.time(),
+                }
+
+
+class FlexBridge(BridgeCore):
+    def __init__(self, cfg, dry_run=False):
+        super().__init__(cfg, dry_run=dry_run)
+        self.slices = {}        # slice index -> merged attribute dict
+        self.amplifiers = {}    # amp handle -> merged attribute dict
+        self.rfpower = None
 
     # -- Flex protocol ----------------------------------------------------
 
@@ -563,33 +623,11 @@ class FlexBridge:
         return out
 
     def publish(self):
-        now = time.monotonic()
-        heartbeat = self.cfg["heartbeat_seconds"]
-        floor = self.cfg["min_post_interval"]
         state = self.amp_state()
         if state != self.status["amp"]:
             log.info("Amplifier state: %s", state or "not present")
         self.status["amp"] = state
-        for name, payload in self.payloads().items():
-            prev, sent_at = self.last_sent.get(name, (None, 0.0))
-            changed = payload != prev
-            due = (now - sent_at) >= heartbeat
-            if not (changed or due):
-                continue
-            if changed and (now - sent_at) < floor:
-                continue    # tuning fast; let it settle
-            if self.wavelog.post(payload):
-                if changed:
-                    log.info("%s -> %.6f MHz %s", name,
-                             payload["frequency"] / 1_000_000,
-                             payload.get("mode", "?"))
-                self.last_sent[name] = (payload, now)
-                self.status["radios"][name] = {
-                    "frequency": payload["frequency"],
-                    "mode": payload.get("mode"),
-                    "power": payload.get("power"),
-                    "updated": time.time(),
-                }
+        self.publish_payloads(self.payloads())
 
     # -- main loop --------------------------------------------------------
 
@@ -618,6 +656,101 @@ class FlexBridge:
         self.status["connected"] = False
 
 
+class RigctldBridge(BridgeCore):
+    """CAT via a hamlib rigctld daemon - the brand-agnostic backend.
+
+    Covers every rig hamlib speaks (Elecraft, Icom, Yaesu, Kenwood, ...) at the
+    cost of the Flex-only niceties: one rig, one Wavelog entry, no slices, no
+    TX-follow, no amplifier state, no power. Frequency and mode are polled on
+    an interval because the rigctld protocol has no push.
+
+    Protocol notes (default mode, not extended): commands are single letters
+    terminated by newline. 'f' answers one line, frequency in Hz. 'm' answers
+    two lines, mode name then passband width. A command the rig cannot serve
+    answers a single 'RPRT <negative>' line instead.
+    """
+
+    def __init__(self, cfg, dry_run=False):
+        super().__init__(cfg, dry_run=dry_run)
+        self.sock = None
+        self.reader = None
+
+    def connect(self):
+        host, port = self.cfg["rigctld_host"], int(self.cfg["rigctld_port"])
+        log.info("Connecting to rigctld at %s:%s", host, port)
+        self.sock = socket.create_connection((host, port), timeout=5)
+        self.sock.settimeout(5.0)
+        self.reader = self.sock.makefile("r", encoding="ascii", errors="replace")
+        self.last_sent.clear()
+        self.status.update(connected=True, error=None)
+
+    def query(self, cmd, lines):
+        """Send one command, return its reply lines, or None on a rig error."""
+        self.sock.sendall((cmd + "\n").encode("ascii"))
+        out = []
+        for _ in range(lines):
+            line = self.reader.readline()
+            if not line:
+                raise ConnectionError("rigctld closed the connection")
+            line = line.strip()
+            if line.startswith("RPRT"):
+                return None
+            out.append(line)
+        return out
+
+    def poll_payload(self):
+        reply = self.query("f", 1)
+        if not reply:
+            return None
+        try:
+            hz = int(float(reply[0]))
+        except ValueError:
+            return None
+        payload = {"radio": self.cfg["rigctld_radio_name"], "frequency": hz}
+        reply = self.query("m", 2)
+        if reply and reply[0]:
+            mode = reply[0].upper()
+            payload["mode"] = RIGCTLD_MODE_MAP.get(mode, mode)
+        return payload
+
+    def run(self):
+        backoff = 1
+        interval = float(self.cfg["rigctld_poll_seconds"])
+        while not self.stop_requested:
+            try:
+                self.connect()
+                backoff = 1
+                log.info("Connected. Publishing as %r", self.cfg["rigctld_radio_name"])
+                while not self.stop_requested:
+                    payload = self.poll_payload()
+                    if payload:
+                        self.publish_payloads({payload["radio"]: payload})
+                    time.sleep(interval)
+            except (OSError, ConnectionError) as err:
+                self.status.update(connected=False, error=str(err))
+                log.warning("Lost rigctld (%s); retrying in %ss", err, backoff)
+                try:
+                    self.sock.close()
+                except Exception:
+                    pass
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 30)
+        self.status["connected"] = False
+
+
+BACKENDS = {"flex": FlexBridge, "rigctld": RigctldBridge}
+
+
+def make_bridge(cfg, dry_run=False):
+    backend = (cfg.get("radio_backend") or "flex").lower()
+    cls = BACKENDS.get(backend)
+    if cls is None:
+        log.error("Unknown radio_backend %r - choices: %s",
+                  backend, ", ".join(sorted(BACKENDS)))
+        sys.exit(1)
+    return cls(cfg, dry_run=dry_run)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true",
@@ -637,7 +770,7 @@ def main():
         handlers=handlers,
     )
     cfg = load_config(require_key=not args.dry_run)
-    bridge = FlexBridge(cfg, dry_run=args.dry_run)
+    bridge = make_bridge(cfg, dry_run=args.dry_run)
     forwarder = listener = None
     if cfg.get("wsjtx_enabled"):
         forwarder = QsoForwarder(cfg, dry_run=args.dry_run)

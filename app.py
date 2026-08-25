@@ -195,7 +195,7 @@ class App:
     # -- bridge lifecycle -------------------------------------------------
 
     def start_bridge(self):
-        self.bridge = fw.FlexBridge(self.cfg)
+        self.bridge = fw.make_bridge(self.cfg)
         self.thread = threading.Thread(target=self.bridge.run, daemon=True,
                                        name="flex-bridge")
         self.thread.start()
