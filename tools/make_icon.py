@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate assets/flex-wavelog.ico.
+"""Generate assets/waverider.ico.
 
 The icon is drawn in code rather than shipped as an opaque binary so anyone can
 see exactly what it is and regenerate it. Motif: an RF sine wave crossing a dark
@@ -14,7 +14,7 @@ import os
 from PIL import Image, ImageDraw
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "..", "assets", "flex-wavelog.ico")
+OUT = os.path.join(HERE, "..", "assets", "waverider.ico")
 
 # Draw huge, downscale for anti-aliasing.
 S = 1024

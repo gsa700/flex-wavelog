@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-flex_wavelog.py - bridge FlexRadio slice state to Wavelog's API v2.
+waverider.py - bridge rig CAT state to Wavelog's API v2.
 
-Connects to the radio's TCP API, subscribes to slice and transmit status, and
-POSTs each in-use slice to Wavelog as a separately named radio. Because Wavelog
-upserts on (radio, operator, user_id), each slice letter becomes its own radio
-entry - which is what makes SO2R work without any special handling.
+Two radio backends behind make_bridge(). "flex" speaks the FlexRadio TCP API
+natively: it subscribes to slice and transmit status and POSTs each in-use
+slice to Wavelog as a separately named radio - Wavelog upserts on (radio,
+operator, user_id), so each slice letter becomes its own entry, which is what
+makes SO2R work without special handling. "rigctld" polls a hamlib daemon
+instead and covers every rig hamlib speaks, one rig, one entry.
 
 Targets POST /api/v2/radio with a Bearer token ("wl2_" prefix, radio:write
 scope). The legacy v1 /api/radio endpoint would also work, but v1 keys are
@@ -28,11 +30,11 @@ import time
 import urllib.error
 import urllib.request
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
-LOG_PATH = os.path.join(HERE, "flex_wavelog.log")
+LOG_PATH = os.path.join(HERE, "waverider.log")
 TOKEN_PREFIX = "wl2_"
 
 DEFAULT_CONFIG = {
@@ -104,7 +106,7 @@ RIGCTLD_MODE_MAP = {
     "RTTYR": "RTTY",
 }
 
-log = logging.getLogger("flex-wavelog")
+log = logging.getLogger("waverider")
 
 
 def load_config(require_key=True):

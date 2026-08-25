@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-app.py - desktop shell for Wavelog with the FlexRadio CAT bridge built in.
+app.py - desktop shell for Wavelog with the Waverider CAT bridge built in.
 
 A single window hosting the Wavelog web UI, a preferences/status window reached
-from the native menu, and FlexBridge running on a background thread so CAT
+from the native menu, and the CAT bridge running on a background thread so CAT
 publishing lives and dies with this process instead of a separate scheduled task.
 
 Closing the main window minimises it rather than quitting: an X-click that
@@ -23,16 +23,16 @@ import webbrowser
 import webview
 from webview.menu import Menu, MenuAction, MenuSeparator
 
-import flex_wavelog as fw
+import waverider as wr
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PREFS_HTML = os.path.join(HERE, "ui", "prefs.html")
-ICON_PATH = os.path.join(HERE, "assets", "flex-wavelog.ico")
+ICON_PATH = os.path.join(HERE, "assets", "waverider.ico")
 # WebView2 profile. Without a persistent store the Wavelog session is thrown
 # away on exit and you log in again on every launch.
 STORAGE_PATH = os.path.join(HERE, ".webview")
 
-log = logging.getLogger("flex-wavelog.app")
+log = logging.getLogger("waverider.app")
 
 
 def set_window_icon(window):
@@ -137,9 +137,9 @@ class Api:
 
         token = (incoming.get("api_token") or "").strip()
         if token:
-            if not token.startswith(fw.TOKEN_PREFIX):
+            if not token.startswith(wr.TOKEN_PREFIX):
                 return {"ok": False,
-                        "error": f"Token must start with '{fw.TOKEN_PREFIX}' - "
+                        "error": f"Token must start with '{wr.TOKEN_PREFIX}' - "
                                  "a v1 key won't work against /api/v2/radio"}
             cfg["api_token"] = token
         if not cfg.get("api_token") or "PASTE_YOUR" in cfg["api_token"]:
@@ -149,7 +149,7 @@ class Api:
         for key in ("token_is_set", "radio_A", "radio_B"):
             cfg.pop(key, None)
 
-        with open(fw.CONFIG_PATH, "w", encoding="utf-8") as fh:
+        with open(wr.CONFIG_PATH, "w", encoding="utf-8") as fh:
             json.dump(cfg, fh, indent=2)
         self._app.cfg = cfg
         self._app.restart_bridge()
@@ -182,7 +182,7 @@ class Api:
 
 class App:
     def __init__(self):
-        self.cfg = fw.load_config()
+        self.cfg = wr.load_config()
         self.api = Api(self)
         self.bridge = None
         self.thread = None
@@ -195,16 +195,16 @@ class App:
     # -- bridge lifecycle -------------------------------------------------
 
     def start_bridge(self):
-        self.bridge = fw.make_bridge(self.cfg)
+        self.bridge = wr.make_bridge(self.cfg)
         self.thread = threading.Thread(target=self.bridge.run, daemon=True,
-                                       name="flex-bridge")
+                                       name="bridge")
         self.thread.start()
         self.forwarder = self.listener = None
         if self.cfg.get("wsjtx_enabled"):
-            self.forwarder = fw.QsoForwarder(self.cfg)
+            self.forwarder = wr.QsoForwarder(self.cfg)
             threading.Thread(target=self.forwarder.run, daemon=True,
                              name="qso-forwarder").start()
-            self.listener = fw.WsjtxListener(self.cfg, self.forwarder)
+            self.listener = wr.WsjtxListener(self.cfg, self.forwarder)
             self.listener.start()
 
     def stop_bridge(self):
@@ -279,24 +279,24 @@ def main():
         format="%(asctime)s %(levelname)-7s %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=[logging.handlers.RotatingFileHandler(
-            fw.LOG_PATH, maxBytes=1_000_000, backupCount=3, encoding="utf-8")],
+            wr.LOG_PATH, maxBytes=1_000_000, backupCount=3, encoding="utf-8")],
     )
 
     # Everything past here runs under pythonw with no stderr, so an uncaught
     # exception would kill the app leaving nothing but a task exit code. Log it.
     try:
-        log.info("flex-wavelog %s starting", fw.__version__)
+        log.info("waverider %s starting", wr.__version__)
         set_dpi_awareness()
 
         app = App()
         app.start_bridge()
 
         app.main_window = webview.create_window(
-            "Wavelog", app.cfg["wavelog_url"], width=1280, height=860)
+            "Waverider", app.cfg["wavelog_url"], width=1280, height=860)
         app.main_window.events.closing += app.on_main_closing
         app.main_window.events.shown += lambda: set_window_icon(app.main_window)
 
-        menu = [Menu("Flex-Wavelog", [
+        menu = [Menu("Waverider", [
             MenuAction("Preferences and Status", app.open_prefs),
             MenuAction("Open Wavelog in Browser", app.open_in_browser),
             MenuSeparator(),

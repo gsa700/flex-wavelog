@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Install flex-wavelog: dependencies, config, autostart task, Start Menu entry.
+    Install waverider: dependencies, config, autostart task, Start Menu entry.
 
 .DESCRIPTION
     Deliberately a readable script rather than a packaged binary. A PyInstaller
@@ -19,7 +19,7 @@ $ErrorActionPreference = 'Stop'
 
 $Root      = $PSScriptRoot
 $AppPy     = Join-Path $Root 'app.py'
-$TaskName  = 'Flex-Wavelog CAT Bridge'
+$TaskName  = 'Waverider CAT Bridge'
 $Config    = Join-Path $Root 'config.json'
 $Example   = Join-Path $Root 'config.example.json'
 $MinPython = [version]'3.9'
@@ -27,7 +27,7 @@ $MinPython = [version]'3.9'
 function Say([string]$m) { Write-Host "  $m" }
 function Fail([string]$m) { Write-Host "ERROR: $m" -ForegroundColor Red; exit 1 }
 
-Write-Host "`nflex-wavelog installer`n"
+Write-Host "`nwaverider installer`n"
 
 # --- Python -----------------------------------------------------------------
 $python = $null
@@ -80,19 +80,19 @@ $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$env:USERNAME
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger `
     -Settings $settings -Principal $principal `
-    -Description 'Publishes FlexRadio slice state to Wavelog /api/v2/radio' -Force | Out-Null
+    -Description 'Publishes rig CAT state to Wavelog /api/v2/radio' -Force | Out-Null
 Say "Scheduled task '$TaskName' registered (starts at logon, 30s delay)"
 
 # --- Start Menu shortcut ----------------------------------------------------
 $programs = [Environment]::GetFolderPath('Programs')
-$lnkPath = Join-Path $programs 'Flex-Wavelog.lnk'
+$lnkPath = Join-Path $programs 'Waverider.lnk'
 $shell = New-Object -ComObject WScript.Shell
 $lnk = $shell.CreateShortcut($lnkPath)
 $lnk.TargetPath = $pythonw
 $lnk.Arguments = "`"$AppPy`""
 $lnk.WorkingDirectory = $Root
-$lnk.Description = 'Wavelog with the FlexRadio CAT bridge'
-$icon = Join-Path $Root 'assets\flex-wavelog.ico'
+$lnk.Description = 'Wavelog with the Waverider CAT bridge'
+$icon = Join-Path $Root 'assets\waverider.ico'
 if (Test-Path $icon) { $lnk.IconLocation = "$icon,0" }
 $lnk.Save()
 Say "Start Menu shortcut created"
@@ -101,15 +101,15 @@ Say "Start Menu shortcut created"
 # Per-user (HKCU), so no admin rights - and anything that registers an autostart
 # task ought to be discoverable in Settings > Apps for removal.
 $version = '0.0.0'
-$verLine = Select-String -Path (Join-Path $Root 'flex_wavelog.py') -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
+$verLine = Select-String -Path (Join-Path $Root 'waverider.py') -Pattern '__version__\s*=\s*"([^"]+)"' | Select-Object -First 1
 if ($verLine) { $version = $verLine.Matches[0].Groups[1].Value }
 
-$arp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Flex-Wavelog'
+$arp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Waverider'
 New-Item -Path $arp -Force | Out-Null
 $size = [int]((Get-ChildItem $Root -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1KB)
-Set-ItemProperty -Path $arp -Name DisplayName -Value 'Flex-Wavelog'
+Set-ItemProperty -Path $arp -Name DisplayName -Value 'Waverider'
 Set-ItemProperty -Path $arp -Name DisplayVersion -Value $version
-Set-ItemProperty -Path $arp -Name Publisher -Value 'flex-wavelog project'
+Set-ItemProperty -Path $arp -Name Publisher -Value 'Waverider project'
 Set-ItemProperty -Path $arp -Name InstallLocation -Value $Root
 Set-ItemProperty -Path $arp -Name DisplayIcon -Value $(if (Test-Path $icon) { $icon } else { $pythonw })
 Set-ItemProperty -Path $arp -Name UninstallString -Value "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$(Join-Path $Root 'uninstall.ps1')`""

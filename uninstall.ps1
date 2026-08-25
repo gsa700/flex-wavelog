@@ -1,13 +1,13 @@
 <#
 .SYNOPSIS
-    Uninstall flex-wavelog: stop the app, remove the autostart task, shortcut,
+    Uninstall waverider: stop the app, remove the autostart task, shortcut,
     and WebView2 profile.
 
 .DESCRIPTION
     Removes everything install.ps1 created plus the runtime leftovers a user
     would never think to clean up:
 
-      - the "Flex-Wavelog CAT Bridge" scheduled task (else it keeps starting
+      - the "Waverider CAT Bridge" scheduled task (else it keeps starting
         the app at every logon)
       - the Start Menu shortcut
       - the .webview profile directory (holds a live Wavelog session cookie)
@@ -31,18 +31,18 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $Root     = $PSScriptRoot
-$TaskName = 'Flex-Wavelog CAT Bridge'
+$TaskName = 'Waverider CAT Bridge'
 
 function Say([string]$m) { Write-Host "  $m" }
 
-Write-Host "`nflex-wavelog uninstaller`n"
+Write-Host "`nwaverider uninstaller`n"
 
 # --- Stop the running app ----------------------------------------------------
 # Match on command line, not process name - killing every pythonw.exe on the
 # box would take down unrelated tools.
 $appPy = (Join-Path $Root 'app.py')
 $procs = Get-CimInstance Win32_Process -Filter "Name = 'pythonw.exe' OR Name = 'python.exe'" |
-    Where-Object { $_.CommandLine -like "*$appPy*" -or $_.CommandLine -like '*flex_wavelog.py*' }
+    Where-Object { $_.CommandLine -like "*$appPy*" -or $_.CommandLine -like '*waverider.py*' }
 if ($procs) {
     foreach ($p in $procs) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
     Say "Stopped running app (pid $(($procs.ProcessId) -join ', '))"
@@ -60,7 +60,7 @@ if ($task) {
 }
 
 # --- Start Menu shortcut -----------------------------------------------------
-$lnkPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Flex-Wavelog.lnk'
+$lnkPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Waverider.lnk'
 if (Test-Path $lnkPath) {
     Remove-Item $lnkPath -Force
     Say "Start Menu shortcut removed"
@@ -78,7 +78,7 @@ if (Test-Path $webview) {
 }
 
 # --- Add/Remove Programs entry --------------------------------------------------
-$arp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Flex-Wavelog'
+$arp = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Waverider'
 if (Test-Path $arp) {
     Remove-Item $arp -Recurse -Force
     Say "Add/Remove Programs entry removed"
@@ -87,7 +87,7 @@ if (Test-Path $arp) {
 }
 
 # --- Logs ---------------------------------------------------------------------
-$logs = Get-ChildItem $Root -Filter 'flex_wavelog.log*' -ErrorAction SilentlyContinue
+$logs = Get-ChildItem $Root -Filter 'waverider.log*' -ErrorAction SilentlyContinue
 if ($logs) {
     $logs | Remove-Item -Force
     Say "Log files removed ($($logs.Count))"

@@ -1,17 +1,29 @@
-# flex-wavelog
+# Waverider
 
-Publishes FlexRadio slice state to [Wavelog](https://www.wavelog.org/) so your log's
-frequency, mode and power follow the radio — with first-class SO2R handling.
-Also logs every WSJT-X QSO straight into Wavelog as it happens.
+Matches your radio to your logbook. Waverider publishes rig CAT state to
+[Wavelog](https://www.wavelog.org/) so your log's frequency, mode and power
+follow the radio, and logs every WSJT-X QSO straight into Wavelog as it
+happens — surviving server outages without losing a contact.
 
-Two ways to run it:
+Works with any rig:
+
+| Backend | Rigs | What you get |
+|---|---|---|
+| `flex` | FlexRadio (native TCP API) | Every slice as its own radio entry, SO2R TX-follow, amplifier-aware power |
+| `rigctld` | Anything [hamlib](https://hamlib.github.io/) speaks — Elecraft, Icom, Yaesu, Kenwood, … | One rig, one entry: frequency and mode, polled |
+
+Set `radio_backend` in `config.json`. For `rigctld`, run the daemon yourself —
+it ships with hamlib and comes bundled with WSJT-X — and point
+`rigctld_host` / `rigctld_port` at it.
+
+Two ways to run Waverider:
 
 | | |
 |---|---|
-| `flex_wavelog.py` | Headless bridge. Standard library only, no dependencies. |
+| `waverider.py` | Headless bridge. Standard library only, no dependencies. |
 | `app.py` | Desktop shell — Wavelog in a window, with the bridge running inside it. Needs `pywebview`. |
 
-## Why SO2R needs special handling
+## Why SO2R needs special handling (flex backend)
 
 A Flex runs multiple slice receivers, and Wavelog's `/api/v2/radio` takes one
 frequency per named radio. Publishing "the" frequency means picking one, and any
@@ -82,8 +94,8 @@ scope, from Wavelog's *API Keys* page. Legacy v1 keys are rejected by
 v2 tokens are hashed, scoped and individually revocable.
 
 ```
-python flex_wavelog.py --dry-run    # log payloads without POSTing; no token needed
-python flex_wavelog.py              # headless
+python waverider.py --dry-run    # log payloads without POSTing; no token needed
+python waverider.py              # headless
 python app.py                       # desktop shell
 ```
 
