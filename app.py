@@ -165,12 +165,16 @@ class Api:
             name: dict(info, age=round(now - info["updated"], 1))
             for name, info in bridge.status["radios"].items()
         }
-        return {
+        out = {
             "connected": bridge.status["connected"],
             "error": bridge.status["error"],
             "amp": bridge.status.get("amp"),
             "radios": radios,
         }
+        if self._app.forwarder is not None:
+            out["qso"] = dict(self._app.forwarder.status,
+                              listening=self._app.listener.status["listening"])
+        return out
 
     def quit(self):
         self._app.quit()
@@ -182,6 +186,8 @@ class App:
         self.api = Api(self)
         self.bridge = None
         self.thread = None
+        self.forwarder = None
+        self.listener = None
         self.main_window = None
         self.prefs_window = None
         self.quitting = False
@@ -193,6 +199,13 @@ class App:
         self.thread = threading.Thread(target=self.bridge.run, daemon=True,
                                        name="flex-bridge")
         self.thread.start()
+        self.forwarder = self.listener = None
+        if self.cfg.get("wsjtx_enabled"):
+            self.forwarder = fw.QsoForwarder(self.cfg)
+            threading.Thread(target=self.forwarder.run, daemon=True,
+                             name="qso-forwarder").start()
+            self.listener = fw.WsjtxListener(self.cfg, self.forwarder)
+            self.listener.start()
 
     def stop_bridge(self):
         if self.bridge is not None:
@@ -203,10 +216,16 @@ class App:
                 self.bridge.sock.close()
             except Exception:
                 pass
+        if self.listener is not None:
+            self.listener.stop()
+        if self.forwarder is not None:
+            self.forwarder.stop()
         if self.thread is not None:
             self.thread.join(timeout=5)
         self.bridge = None
         self.thread = None
+        self.forwarder = None
+        self.listener = None
 
     def restart_bridge(self):
         self.stop_bridge()

@@ -11,5 +11,9 @@
   "heartbeat_seconds": 5,
   "min_post_interval": 1.0,
   "send_power": true,
-  "amp_power_watts": 1000
+  "amp_power_watts": 1000,
+  "wsjtx_enabled": true,
+  "wsjtx_bind": "127.0.0.1",
+  "wsjtx_port": 2237,
+  "station_profile_id": 1
 }

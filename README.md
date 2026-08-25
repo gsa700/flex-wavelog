@@ -2,6 +2,7 @@
 
 Publishes FlexRadio slice state to [Wavelog](https://www.wavelog.org/) so your log's
 frequency, mode and power follow the radio — with first-class SO2R handling.
+Also logs every WSJT-X QSO straight into Wavelog as it happens.
 
 Two ways to run it:
 
@@ -29,6 +30,25 @@ slices with no further interaction. You log on TX; so does the logger.
 
 Power is only ever attached to the transmitting slice — reporting output power on a
 slice you're merely listening on would put a falsehood in your log.
+
+## WSJT-X QSO forwarding
+
+WSJT-X broadcasts every logged QSO over UDP (default `127.0.0.1:2237`, under
+*Settings → Reporting*). The bridge listens there, takes the ready-made ADIF
+record from the **Logged ADIF** message, and logs it into Wavelog —
+`POST /api/v2/qso` with `import_type: "adif"`, filed under
+`station_profile_id`. The API token needs the `qso:write` scope in addition
+to `radio:write`.
+
+Onward replication is deliberately left to Wavelog: once the QSO is in the
+main log, the server's cron sync carries it to QRZ (and anywhere else that's
+configured) with the rest of the log. Note that Wavelog skips its *real-time*
+QRZ push for API-submitted QSOs, so uploads land on the cron cadence, not
+instantly — by design, one source of truth and one uploader.
+
+Undelivered QSOs (server down, no network) persist in `qso_spool.json` and are
+retried every minute; duplicates reported by the server on a replay are
+treated as delivered.
 
 ## Setup
 
@@ -97,6 +117,15 @@ Things that cost real time to work out, recorded so they don't have to be again:
 - Real forward power *is* available (`FWD`, `src=AMP`, in dBm), but meter values
   stream over UDP VITA-49 rather than the text API — and ADIF wants nominal
   power anyway, so an instantaneous sample would be worse, not better.
+- **WSJT-X's UDP protocol is QDataStream**: big-endian, magic `0xadbccbda`,
+  then schema, message type, and length-prefixed fields (`0xFFFFFFFF` = null).
+  Message type 12 (*Logged ADIF*) carries the QSO as a complete ADIF document
+  with an `<eoh>` header — far simpler than reassembling type 5's twenty typed
+  fields, some of which are Qt `QDateTime` structures.
+- **Wavelog skips its real-time QRZ push for API-submitted QSOs** (documented,
+  for performance). QSOs logged through the API reach QRZ on the cron sync
+  cadence instead — fine here, since the cron sync is how this station keeps
+  QRZ current anyway.
 
 ## Desktop shell
 

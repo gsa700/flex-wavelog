@@ -19,13 +19,16 @@ import json
 import logging
 import logging.handlers
 import os
+import re
 import socket
+import struct
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -55,6 +58,16 @@ DEFAULT_CONFIG = {
     # Nominal output to log while the amplifier is out of standby. Drive power
     # from the radio is used whenever it is in standby.
     "amp_power_watts": 1000,
+    # WSJT-X QSO forwarding: listen for the "Logged ADIF" UDP broadcast and
+    # log each QSO into Wavelog. Onward sync (QRZ etc.) is Wavelog's job -
+    # API-submitted QSOs skip the real-time QRZ push and ride the cron sync
+    # with everything else.
+    "wsjtx_enabled": True,
+    "wsjtx_bind": "127.0.0.1",
+    "wsjtx_port": 2237,
+    # The Wavelog station profile QSOs are filed under - the number in the URL
+    # when editing the profile. The API rejects profiles the token doesn't own.
+    "station_profile_id": 1,
 }
 
 # Flex reports rig modes; Wavelog's MODE_OVERRIDES doesn't know the DIG* ones and
@@ -161,6 +174,244 @@ class WavelogClient:
         except Exception:
             pass
         log.error("Wavelog HTTP %s - %s", err.code, detail or err.reason)
+
+
+# -- WSJT-X QSO forwarding ---------------------------------------------------
+
+WSJTX_MAGIC = 0xADBCCBDA
+WSJTX_LOGGED_ADIF = 12
+SPOOL_PATH = os.path.join(HERE, "qso_spool.json")
+
+
+def parse_logged_adif(datagram):
+    """Return the ADIF text from a WSJT-X "Logged ADIF" datagram, else None.
+
+    WSJT-X serialises with QDataStream: everything big-endian, and each utf8
+    field is a quint32 byte count followed by the bytes (0xFFFFFFFF meaning
+    null). Every message starts magic / schema / type / id; only type 12
+    matters here - it carries the QSO as a complete ADIF document, which beats
+    reassembling one from the 20-odd typed fields of the QSO Logged message.
+    """
+    if len(datagram) < 16:
+        return None
+    magic, _schema, mtype = struct.unpack_from(">III", datagram, 0)
+    if magic != WSJTX_MAGIC or mtype != WSJTX_LOGGED_ADIF:
+        return None
+    offset = 12
+    try:
+        for skip_id in (True, False):
+            (count,) = struct.unpack_from(">I", datagram, offset)
+            offset += 4
+            if count == 0xFFFFFFFF:
+                continue
+            if not skip_id:
+                return datagram[offset:offset + count].decode("utf-8", "replace")
+            offset += count
+    except struct.error:
+        pass
+    return None
+
+
+def adif_record(document):
+    """The bare record from an ADIF document (WSJT-X sends header + <eoh>)."""
+    record = re.split(r"<eoh>", document, flags=re.IGNORECASE)[-1].strip()
+    return record if re.search(r"<eor>", record, re.IGNORECASE) else None
+
+
+def adif_field(record, name):
+    m = re.search(rf"<{name}:(\d+)(?::[^>]*)?>", record, re.IGNORECASE)
+    if not m:
+        return None
+    length = int(m.group(1))
+    return record[m.end():m.end() + length].strip() or None
+
+
+class QsoForwarder:
+    """Delivers logged QSOs to Wavelog, surviving server outages.
+
+    Pending entries persist in qso_spool.json so a crash between log and
+    delivery cannot lose a contact - the one kind of loss this file exists to
+    prevent. Onward replication to QRZ and friends is Wavelog's cron sync's
+    job, not ours.
+    """
+
+    RETRY_SECONDS = 60
+
+    def __init__(self, cfg, dry_run=False):
+        self.cfg = cfg
+        self.dry_run = dry_run
+        self.qso_url = cfg["wavelog_url"].rstrip("/") + "/api/v2/qso"
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        self.stop_requested = False
+        self.warned = set()
+        self.status = {"last_call": None, "last_at": None, "delivered": 0, "pending": 0}
+        self.pending = self._load_spool()
+        self.status["pending"] = len(self.pending)
+
+    def _load_spool(self):
+        try:
+            with open(SPOOL_PATH, encoding="utf-8") as fh:
+                entries = json.load(fh)
+            if entries:
+                log.info("Spool holds %d undelivered QSO(s) from a previous run", len(entries))
+            return entries
+        except FileNotFoundError:
+            return []
+        except (json.JSONDecodeError, OSError) as err:
+            log.error("Could not read %s (%s) - starting empty", SPOOL_PATH, err)
+            return []
+
+    def _save_spool(self):
+        # Written on every change rather than at exit: the process dying is
+        # exactly the case the spool is for.
+        try:
+            with open(SPOOL_PATH, "w", encoding="utf-8") as fh:
+                json.dump(self.pending, fh, indent=2)
+        except OSError as err:
+            log.error("Could not write %s: %s", SPOOL_PATH, err)
+
+    def submit(self, document):
+        record = adif_record(document)
+        if not record:
+            log.warning("WSJT-X datagram had no ADIF record; ignored")
+            return
+        call = adif_field(record, "call") or "?"
+        entry = {
+            "record": record,
+            "logged_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        with self.lock:
+            self.pending.append(entry)
+            self._save_spool()
+        log.info("QSO logged: %s - forwarding", call)
+        self.status["last_call"] = call
+        self.status["last_at"] = time.time()
+        self.wake.set()
+
+    # -- delivery ---------------------------------------------------------
+
+    def _post_wavelog(self, record):
+        if self.dry_run:
+            log.info("DRY-RUN would POST QSO to Wavelog: %s", record)
+            return True
+        body = json.dumps({
+            "station_profile_id": int(self.cfg["station_profile_id"]),
+            "import_type": "adif",
+            "adif": record,
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            self.qso_url, data=body, method="POST",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer {}".format(self.cfg["api_token"]),
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                summary = json.loads(resp.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as err:
+            self._report_once("wavelog", err)
+            return False
+        except (urllib.error.URLError, json.JSONDecodeError) as err:
+            log.warning("Wavelog QSO POST failed: %s", getattr(err, "reason", err))
+            return False
+        if summary.get("skipped"):
+            # Already in the log - a WSJT-X retransmit or a spool replay.
+            log.info("Wavelog skipped the QSO as a duplicate")
+        return True
+
+    def _report_once(self, target, err):
+        if (target, err.code) in self.warned:
+            return
+        self.warned.add((target, err.code))
+        detail = ""
+        try:
+            payload = json.loads(err.read().decode("utf-8", "replace"))
+            error = payload.get("error", {})
+            detail = "{}: {}".format(error.get("code", ""), error.get("message", "")).strip(": ")
+        except Exception:
+            pass
+        log.error("%s QSO POST HTTP %s - %s", target, err.code, detail or err.reason)
+
+    def flush(self):
+        with self.lock:
+            entries = list(self.pending)
+        done = [e for e in entries if self._post_wavelog(e["record"])]
+        with self.lock:
+            self.pending = [e for e in self.pending if e not in done]
+            if done:
+                self._save_spool()
+            self.status["delivered"] += len(done)
+            self.status["pending"] = len(self.pending)
+        if done:
+            log.info("Delivered %d QSO(s); %d pending", len(done), len(self.pending))
+
+    def run(self):
+        """Retry loop - flushes on submit() and every RETRY_SECONDS otherwise."""
+        while not self.stop_requested:
+            if self.pending:
+                self.flush()
+            self.wake.wait(self.RETRY_SECONDS)
+            self.wake.clear()
+
+    def stop(self):
+        self.stop_requested = True
+        self.wake.set()
+
+
+class WsjtxListener(threading.Thread):
+    """Owns the UDP socket WSJT-X broadcasts to, feeding the forwarder.
+
+    Runs as a daemon so it can never hold the process open; orderly shutdown
+    is stop() closing the socket out from under recvfrom.
+    """
+
+    def __init__(self, cfg, forwarder):
+        super().__init__(daemon=True, name="wsjtx-listener")
+        self.cfg = cfg
+        self.forwarder = forwarder
+        self.sock = None
+        self.stop_requested = False
+        self.status = {"listening": False, "error": None}
+
+    def run(self):
+        addr = (self.cfg["wsjtx_bind"], int(self.cfg["wsjtx_port"]))
+        while not self.stop_requested:
+            try:
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.bind(addr)
+            except OSError as err:
+                # Usually another WSJT-X consumer holding the port. Keep
+                # trying: the whole point is that QSOs must not be lost to a
+                # transient squatter.
+                self.status.update(listening=False, error=str(err))
+                log.warning("Cannot bind UDP %s:%s (%s); retrying in 30s", *addr, err)
+                time.sleep(30)
+                continue
+            self.status.update(listening=True, error=None)
+            log.info("Listening for WSJT-X on %s:%s", *addr)
+            while not self.stop_requested:
+                try:
+                    datagram, _ = self.sock.recvfrom(65536)
+                except OSError:
+                    break       # closed by stop(), or a stack-level failure
+                document = parse_logged_adif(datagram)
+                if document:
+                    self.forwarder.submit(document)
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+        self.status["listening"] = False
+
+    def stop(self):
+        self.stop_requested = True
+        if self.sock is not None:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
 
 
 class FlexBridge:
@@ -387,10 +638,22 @@ def main():
     )
     cfg = load_config(require_key=not args.dry_run)
     bridge = FlexBridge(cfg, dry_run=args.dry_run)
+    forwarder = listener = None
+    if cfg.get("wsjtx_enabled"):
+        forwarder = QsoForwarder(cfg, dry_run=args.dry_run)
+        threading.Thread(target=forwarder.run, daemon=True,
+                         name="qso-forwarder").start()
+        listener = WsjtxListener(cfg, forwarder)
+        listener.start()
     try:
         bridge.run()
     except KeyboardInterrupt:
         log.info("Stopped.")
+    finally:
+        if listener is not None:
+            listener.stop()
+        if forwarder is not None:
+            forwarder.stop()
 
 
 if __name__ == "__main__":
