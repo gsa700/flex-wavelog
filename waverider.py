@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 
-__version__ = "0.5.2"
+__version__ = "0.6.0"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")

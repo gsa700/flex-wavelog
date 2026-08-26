@@ -6,9 +6,10 @@ A single window hosting the Wavelog web UI, a preferences/status window reached
 from the native menu, and the CAT bridge running on a background thread so CAT
 publishing lives and dies with this process instead of a separate scheduled task.
 
-Closing the main window minimises it rather than quitting: an X-click that
-silently stopped CAT publishing mid-contest would be a nasty surprise. Quitting
-is a deliberate act from the menu.
+Closing the main window closes the app, N1MM-style: a confirmation dialog
+makes it deliberate, because CAT publishing and QSO forwarding stop with it.
+Menu Quit goes through the same dialog - destroy() runs the same FormClosing
+path, so there is exactly one way out and it always asks.
 """
 
 import json
@@ -55,6 +56,43 @@ def save_ui_state(**entries):
             json.dump(state, fh, indent=2)
     except OSError as err:
         log.warning("Could not write %s: %s", UI_STATE_PATH, err)
+
+
+def window_geometry(window):
+    """The window's current x/y/width/height, plus whether it is maximized.
+
+    A maximized window must not save its maximized frame as if it were a
+    normal position - restoring that gives a fake-maximized window that isn't.
+    On Windows the form's RestoreBounds carries the normal-state rectangle, so
+    that is what gets saved, alongside a flag to re-maximize on open.
+    """
+    geo = {"x": int(window.x), "y": int(window.y),
+           "width": int(window.width), "height": int(window.height),
+           "maximized": False}
+    if sys.platform == "win32":
+        try:
+            from System.Windows.Forms import FormWindowState
+            form = window.native
+            if form.WindowState == FormWindowState.Maximized:
+                rb = form.RestoreBounds
+                geo = {"x": rb.X, "y": rb.Y,
+                       "width": rb.Width, "height": rb.Height,
+                       "maximized": True}
+        except Exception:
+            pass    # plain coordinates are still a sane save
+    return geo
+
+
+def geometry_kwargs(geo, default_width, default_height):
+    """create_window() kwargs from a saved geometry dict (possibly empty)."""
+    kwargs = {"width": geo.get("width", default_width),
+              "height": geo.get("height", default_height)}
+    if ("x" in geo and "y" in geo and position_visible(
+            geo["x"], geo["y"], kwargs["width"], kwargs["height"])):
+        kwargs["x"], kwargs["y"] = geo["x"], geo["y"]
+    if geo.get("maximized"):
+        kwargs["maximized"] = True
+    return kwargs
 
 
 def position_visible(x, y, w, h):
@@ -367,13 +405,9 @@ class App:
     def open_prefs(self):
         if self.prefs_window is None:
             geo = load_ui_state().get("setup_window") or {}
-            kwargs = {"width": geo.get("width", 820),
-                      "height": geo.get("height", 760)}
-            if ("x" in geo and "y" in geo and position_visible(
-                    geo["x"], geo["y"], kwargs["width"], kwargs["height"])):
-                kwargs["x"], kwargs["y"] = geo["x"], geo["y"]
             self.prefs_window = webview.create_window(
-                "Setup", PREFS_HTML, js_api=self.api, **kwargs)
+                "Setup", PREFS_HTML, js_api=self.api,
+                **geometry_kwargs(geo, 820, 760))
             self.prefs_window.events.closing += self._prefs_save_geometry
             self.prefs_window.events.closed += self._prefs_closed
             self.prefs_window.events.shown += (
@@ -389,10 +423,7 @@ class App:
         if window is None:
             return
         try:
-            save_ui_state(setup_window={
-                "x": int(window.x), "y": int(window.y),
-                "width": int(window.width), "height": int(window.height),
-            })
+            save_ui_state(setup_window=window_geometry(window))
         except Exception as err:
             log.warning("Could not save Setup window position: %s", err)
 
@@ -400,12 +431,20 @@ class App:
         self.prefs_window = None
 
     def on_main_closing(self):
-        if self.quitting:
-            return True
-        self.main_window.minimize()
-        return False        # cancel the close; CAT keeps publishing
+        """Save geometry before the close-confirmation dialog appears.
 
-    def quit(self):
+        The closing event fires ahead of pywebview's confirm_close prompt, so
+        this also runs when the user then cancels - saving the position of a
+        window that stays open, which is merely a harmlessly fresh save. No
+        return value: cancelling the close is the dialog's job, not ours.
+        """
+        try:
+            save_ui_state(main_window=window_geometry(self.main_window))
+        except Exception as err:
+            log.warning("Could not save main window position: %s", err)
+
+    def on_main_closed(self):
+        """The user confirmed the close - only now does anything stop."""
         self.quitting = True
         self.stop_bridge()
         for window in list(webview.windows):
@@ -413,6 +452,17 @@ class App:
                 window.destroy()
             except Exception:
                 pass
+
+    def quit(self):
+        """Menu Quit. destroy() runs the same FormClosing path as an X-click,
+        so the confirm_close dialog still asks - cancelling aborts the quit
+        with the bridge untouched. Cleanup belongs to on_main_closed alone;
+        doing any here would kill the bridge behind a still-open window when
+        the user cancels."""
+        if self.main_window is not None and not self.quitting:
+            self.main_window.destroy()
+        else:
+            self.on_main_closed()
 
 
 def main():
@@ -433,9 +483,12 @@ def main():
         app = App()
         app.start_bridge()
 
+        main_geo = load_ui_state().get("main_window") or {}
         app.main_window = webview.create_window(
-            "Waverider", app.cfg["wavelog_url"], width=1280, height=860)
+            "Waverider", app.cfg["wavelog_url"], confirm_close=True,
+            **geometry_kwargs(main_geo, 1280, 860))
         app.main_window.events.closing += app.on_main_closing
+        app.main_window.events.closed += app.on_main_closed
         app.main_window.events.shown += lambda: set_window_icon(app.main_window)
 
         # "Tools", not "Waverider": the window title already says that, and a
@@ -455,8 +508,12 @@ def main():
             log.info("devtools enabled - right-click a window and choose Inspect")
 
         # private_mode=False + storage_path keeps the Wavelog login across runs.
+        # The localization override is the text of the confirm_close dialog.
         webview.start(menu=menu, private_mode=False,
-                      storage_path=STORAGE_PATH, debug=debug)
+                      storage_path=STORAGE_PATH, debug=debug,
+                      localization={"global.quitConfirmation":
+                                    "Close Waverider? CAT publishing and "
+                                    "WSJT-X QSO forwarding stop with it."})
     except Exception:
         log.exception("Fatal error - app is exiting")
         raise

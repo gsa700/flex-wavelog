@@ -142,8 +142,10 @@ Things that cost real time to work out, recorded so they don't have to be again:
 ## Desktop shell
 
 `app.py` puts Wavelog in a window and runs the bridge on a background thread.
-Closing the window **minimises** it — an X-click that silently stopped CAT
-publishing mid-contest would be a poor surprise. Quit deliberately from the menu.
+Closing the window asks for confirmation first (N1MM-style) because CAT
+publishing and QSO forwarding stop with it — then quits. Menu Quit asks the
+same question; there is one way out and it is always deliberate. Both windows
+remember their position and size across runs (`ui_state.json`).
 
 Preferences and live bridge status are on the menu too. Saving preferences rewrites
 `config.json` and restarts the bridge in place. The token is stored but never
