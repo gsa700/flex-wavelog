@@ -10,3 +10,4 @@ __pycache__/
 .venv/
 venv/
 qso_spool.json
+ui_state.json

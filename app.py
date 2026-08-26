@@ -32,8 +32,47 @@ ICON_PATH = os.path.join(HERE, "assets", "waverider.ico")
 # WebView2 profile. Without a persistent store the Wavelog session is thrown
 # away on exit and you log in again on every launch.
 STORAGE_PATH = os.path.join(HERE, ".webview")
+# Window geometry lives here, not in config.json: that file is the user's
+# settings and goes through save_config()'s validation - UI state shouldn't.
+UI_STATE_PATH = os.path.join(HERE, "ui_state.json")
 
 log = logging.getLogger("waverider.app")
+
+
+def load_ui_state():
+    try:
+        with open(UI_STATE_PATH, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_ui_state(**entries):
+    state = load_ui_state()
+    state.update(entries)
+    try:
+        with open(UI_STATE_PATH, "w", encoding="utf-8") as fh:
+            json.dump(state, fh, indent=2)
+    except OSError as err:
+        log.warning("Could not write %s: %s", UI_STATE_PATH, err)
+
+
+def position_visible(x, y, w, h):
+    """Is enough of a window at (x, y) on the desktop to grab its title bar?
+
+    A saved position is only trustworthy while the monitor layout that produced
+    it exists - unplug a display and restored coordinates can land entirely
+    off-screen, which reads as "the window doesn't open". Checked against the
+    virtual screen (all monitors); anywhere but Windows just trust the values.
+    """
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    u = ctypes.windll.user32
+    vx, vy = u.GetSystemMetrics(76), u.GetSystemMetrics(77)
+    vw, vh = u.GetSystemMetrics(78), u.GetSystemMetrics(79)
+    return (x + w > vx + 50 and x < vx + vw - 50
+            and y >= vy - 8 and y < vy + vh - 50)
 
 
 def set_window_icon(window):
@@ -327,15 +366,35 @@ class App:
 
     def open_prefs(self):
         if self.prefs_window is None:
+            geo = load_ui_state().get("setup_window") or {}
+            kwargs = {"width": geo.get("width", 820),
+                      "height": geo.get("height", 760)}
+            if ("x" in geo and "y" in geo and position_visible(
+                    geo["x"], geo["y"], kwargs["width"], kwargs["height"])):
+                kwargs["x"], kwargs["y"] = geo["x"], geo["y"]
             self.prefs_window = webview.create_window(
-                "Setup", PREFS_HTML,
-                js_api=self.api, width=820, height=760)
+                "Setup", PREFS_HTML, js_api=self.api, **kwargs)
+            self.prefs_window.events.closing += self._prefs_save_geometry
             self.prefs_window.events.closed += self._prefs_closed
             self.prefs_window.events.shown += (
                 lambda: (set_window_icon(self.prefs_window),
                          hide_window_menu(self.prefs_window)))
         else:
             self.prefs_window.show()
+
+    def _prefs_save_geometry(self):
+        """Record where the user left the Setup window (closing, not closed:
+        the native window still exists here, so its geometry is readable)."""
+        window = self.prefs_window
+        if window is None:
+            return
+        try:
+            save_ui_state(setup_window={
+                "x": int(window.x), "y": int(window.y),
+                "width": int(window.width), "height": int(window.height),
+            })
+        except Exception as err:
+            log.warning("Could not save Setup window position: %s", err)
 
     def _prefs_closed(self):
         self.prefs_window = None

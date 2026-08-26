@@ -87,6 +87,8 @@ if (Test-Path $arp) {
 }
 
 # --- Logs ---------------------------------------------------------------------
+$state = Join-Path $Root 'ui_state.json'
+if (Test-Path $state) { Remove-Item $state -Force; Say "Window-position state removed" }
 $logs = Get-ChildItem $Root -Filter 'waverider.log*' -ErrorAction SilentlyContinue
 if ($logs) {
     $logs | Remove-Item -Force
