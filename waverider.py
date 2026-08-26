@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -207,33 +207,41 @@ WSJTX_LOGGED_ADIF = 12
 SPOOL_PATH = os.path.join(HERE, "qso_spool.json")
 
 
-def parse_logged_adif(datagram):
-    """Return the ADIF text from a WSJT-X "Logged ADIF" datagram, else None.
+def parse_wsjtx(datagram):
+    """Return (msg_type, instance_id, adif_or_None) for a WSJT-X datagram.
 
     WSJT-X serialises with QDataStream: everything big-endian, and each utf8
     field is a quint32 byte count followed by the bytes (0xFFFFFFFF meaning
-    null). Every message starts magic / schema / type / id; only type 12
-    matters here - it carries the QSO as a complete ADIF document, which beats
-    reassembling one from the 20-odd typed fields of the QSO Logged message.
+    null). Every message starts magic / schema / type / id. The id is the
+    instance name ("WSJT-X - S1"), which is how a multi-instance station can
+    be told apart on one socket. Type 12 (Logged ADIF) additionally carries
+    the QSO as a complete ADIF document, which beats reassembling one from
+    the 20-odd typed fields of the QSO Logged message.
+
+    Returns None for anything that is not a WSJT-X datagram.
     """
     if len(datagram) < 16:
         return None
     magic, _schema, mtype = struct.unpack_from(">III", datagram, 0)
-    if magic != WSJTX_MAGIC or mtype != WSJTX_LOGGED_ADIF:
+    if magic != WSJTX_MAGIC:
         return None
     offset = 12
+    instance = ""
+    adif = None
     try:
-        for skip_id in (True, False):
+        (count,) = struct.unpack_from(">I", datagram, offset)
+        offset += 4
+        if count != 0xFFFFFFFF:
+            instance = datagram[offset:offset + count].decode("utf-8", "replace")
+            offset += count
+        if mtype == WSJTX_LOGGED_ADIF:
             (count,) = struct.unpack_from(">I", datagram, offset)
             offset += 4
-            if count == 0xFFFFFFFF:
-                continue
-            if not skip_id:
-                return datagram[offset:offset + count].decode("utf-8", "replace")
-            offset += count
+            if count != 0xFFFFFFFF:
+                adif = datagram[offset:offset + count].decode("utf-8", "replace")
     except struct.error:
-        pass
-    return None
+        return None
+    return (mtype, instance, adif)
 
 
 def adif_record(document):
@@ -397,7 +405,12 @@ class WsjtxListener(threading.Thread):
         self.forwarder = forwarder
         self.sock = None
         self.stop_requested = False
-        self.status = {"listening": False, "error": None}
+        # instances: {"WSJT-X - S1": unix_time_last_heard, ...} - every WSJT-X
+        # message carries the instance name, so any traffic at all (heartbeats
+        # every ~15s included) proves that instance's datagrams reach us. This
+        # exists because "QSOs arrive" alone cannot distinguish "both instances
+        # work" from "one works and the other has been silent".
+        self.status = {"listening": False, "error": None, "instances": {}}
 
     def run(self):
         addr = (self.cfg["wsjtx_bind"], int(self.cfg["wsjtx_port"]))
@@ -420,9 +433,16 @@ class WsjtxListener(threading.Thread):
                     datagram, _ = self.sock.recvfrom(65536)
                 except OSError:
                     break       # closed by stop(), or a stack-level failure
-                document = parse_logged_adif(datagram)
-                if document:
-                    self.forwarder.submit(document)
+                parsed = parse_wsjtx(datagram)
+                if parsed is None:
+                    continue
+                mtype, instance, adif = parsed
+                if instance:
+                    if instance not in self.status["instances"]:
+                        log.info("WSJT-X instance heard: %s", instance)
+                    self.status["instances"][instance] = time.time()
+                if mtype == WSJTX_LOGGED_ADIF and adif:
+                    self.forwarder.submit(adif)
             try:
                 self.sock.close()
             except Exception:
