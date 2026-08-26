@@ -60,6 +60,36 @@ def set_window_icon(window):
         log.warning("Could not set window icon: %s", err)
 
 
+def hide_window_menu(window):
+    """Remove the app menu bar from a secondary window (Windows only).
+
+    pywebview applies the menu handed to webview.start() to every window it
+    creates - per-window menus aren't in its API. A Setup dialog carrying a
+    menu whose first item opens Setup is clutter, so on the WinForms backend
+    we find the form's MenuStrip and hide it. Cosmetic like the icon: failure
+    is logged and swallowed, and marshalled through Invoke for the same
+    cross-thread reason.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import clr
+        clr.AddReference("System.Windows.Forms")
+        from System import Action
+        from System.Windows.Forms import MenuStrip
+
+        form = window.native
+
+        def hide():
+            for ctl in list(form.Controls):
+                if isinstance(ctl, MenuStrip):
+                    ctl.Visible = False
+
+        form.Invoke(Action(hide))
+    except Exception as err:
+        log.warning("Could not hide the Setup window menu: %s", err)
+
+
 def set_dpi_awareness():
     """Declare per-monitor DPI awareness before any window exists.
 
@@ -302,7 +332,8 @@ class App:
                 js_api=self.api, width=820, height=760)
             self.prefs_window.events.closed += self._prefs_closed
             self.prefs_window.events.shown += (
-                lambda: set_window_icon(self.prefs_window))
+                lambda: (set_window_icon(self.prefs_window),
+                         hide_window_menu(self.prefs_window)))
         else:
             self.prefs_window.show()
 
@@ -348,7 +379,9 @@ def main():
         app.main_window.events.closing += app.on_main_closing
         app.main_window.events.shown += lambda: set_window_icon(app.main_window)
 
-        menu = [Menu("Waverider", [
+        # "Tools", not "Waverider": the window title already says that, and a
+        # menu that repeats the line above it carries no information.
+        menu = [Menu("Tools", [
             MenuAction("Setup", app.open_prefs),
             MenuAction("Open Wavelog in Browser", app.open_in_browser),
             MenuSeparator(),
