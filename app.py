@@ -104,16 +104,35 @@ class Api:
         names = cfg.get("radio_names") or {}
         cfg["radio_A"] = names.get("A", "")
         cfg["radio_B"] = names.get("B", "")
+        cfg["app_version"] = wr.__version__
         return cfg
+
+    def open_repo(self):
+        webbrowser.open("https://github.com/gsa700/waverider")
 
     def save_config(self, incoming):
         cfg = dict(self._app.cfg)
 
-        for key in ("flex_host", "wavelog_url"):
-            value = (incoming.get(key) or "").strip()
-            if not value:
+        backend = (incoming.get("radio_backend") or "flex").strip().lower()
+        if backend not in wr.BACKENDS:
+            return {"ok": False, "error": f"Unknown radio backend {backend!r}"}
+        cfg["radio_backend"] = backend
+
+        def text(key):
+            return (incoming.get(key) or "").strip()
+
+        # Only the active backend's fields are *required*; the inactive one's
+        # keep their stored values so switching back doesn't forget them.
+        required = ["wavelog_url"]
+        required += ["flex_host"] if backend == "flex" else \
+                    ["rigctld_host", "rigctld_radio_name"]
+        for key in required:
+            if not text(key):
                 return {"ok": False, "error": f"{key} cannot be empty"}
-            cfg[key] = value
+        cfg["wavelog_url"] = text("wavelog_url")
+        for key in ("flex_host", "rigctld_host", "rigctld_radio_name"):
+            cfg[key] = text(key) or cfg.get(key)
+        cfg["wsjtx_bind"] = text("wsjtx_bind") or "127.0.0.1"
 
         # An empty tx_radio_name is meaningful: it disables the follower entry.
         tx_name = (incoming.get("tx_radio_name") or "").strip()
@@ -121,13 +140,18 @@ class Api:
 
         try:
             cfg["flex_port"] = int(incoming.get("flex_port") or 4992)
+            cfg["rigctld_port"] = int(incoming.get("rigctld_port") or 4532)
+            cfg["rigctld_poll_seconds"] = float(incoming.get("rigctld_poll_seconds") or 1)
+            cfg["wsjtx_port"] = int(incoming.get("wsjtx_port") or 2237)
+            cfg["station_profile_id"] = int(incoming.get("station_profile_id") or 1)
             cfg["heartbeat_seconds"] = float(incoming.get("heartbeat_seconds") or 5)
             cfg["min_post_interval"] = float(incoming.get("min_post_interval") or 1)
             cfg["amp_power_watts"] = int(incoming.get("amp_power_watts") or 0)
         except (TypeError, ValueError):
-            return {"ok": False, "error": "Port and interval fields must be numbers"}
+            return {"ok": False, "error": "Port, ID and interval fields must be numbers"}
 
-        cfg["send_power"] = bool(incoming.get("send_power"))
+        for key in ("send_power", "wsjtx_enabled", "auto_refresh_log"):
+            cfg[key] = bool(incoming.get(key))
 
         names = {}
         for letter in ("A", "B"):
@@ -274,7 +298,7 @@ class App:
     def open_prefs(self):
         if self.prefs_window is None:
             self.prefs_window = webview.create_window(
-                "Preferences and Status", PREFS_HTML,
+                "Setup", PREFS_HTML,
                 js_api=self.api, width=820, height=760)
             self.prefs_window.events.closed += self._prefs_closed
             self.prefs_window.events.shown += (
@@ -325,7 +349,7 @@ def main():
         app.main_window.events.shown += lambda: set_window_icon(app.main_window)
 
         menu = [Menu("Waverider", [
-            MenuAction("Preferences and Status", app.open_prefs),
+            MenuAction("Setup", app.open_prefs),
             MenuAction("Open Wavelog in Browser", app.open_in_browser),
             MenuSeparator(),
             MenuAction("Quit", app.quit),

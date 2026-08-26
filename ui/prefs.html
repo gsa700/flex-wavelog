@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Preferences and Status</title>
+<title>Setup</title>
 <style>
   :root {
     --bg: #2b2b2b;
@@ -17,10 +17,27 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; padding: 20px;
+    margin: 0; padding: 0;
     background: var(--bg); color: var(--text);
     font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    display: flex; flex-direction: column; height: 100vh;
   }
+  /* -- tabs -- */
+  nav {
+    display: flex; gap: 2px; padding: 10px 16px 0;
+    border-bottom: 1px solid var(--line); background: #262626;
+  }
+  nav button {
+    padding: 8px 18px; border: none; background: transparent;
+    color: var(--muted); font: inherit; font-weight: 600; cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  nav button:hover { color: var(--text); }
+  nav button.active { color: var(--ok); border-bottom-color: var(--ok); }
+  main { flex: 1; overflow-y: auto; padding: 18px 20px; }
+  .tab { display: none; }
+  .tab.active { display: block; }
+  /* -- panels & forms -- */
   h2 {
     margin: 0 0 12px; font-size: 15px; font-weight: 600;
     letter-spacing: .02em; padding-bottom: 6px;
@@ -38,69 +55,209 @@
   td.num { font-variant-numeric: tabular-nums; }
   .grid { display: grid; grid-template-columns: 190px 1fr; gap: 10px 14px; align-items: center; }
   label { color: var(--muted); }
-  input[type=text], input[type=password], input[type=number] {
+  input[type=text], input[type=password], input[type=number], select {
     width: 100%; padding: 7px 9px; border-radius: 4px;
     border: 1px solid var(--line); background: #262626; color: var(--text);
     font: inherit;
   }
-  input:focus { outline: none; border-color: var(--accent); }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  input[type=checkbox] { justify-self: start; width: auto; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .row { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
-  button {
+  .empty { color: var(--muted); font-style: italic; }
+  /* -- footer bar -- */
+  footer {
+    display: flex; gap: 10px; align-items: center;
+    padding: 12px 20px; border-top: 1px solid var(--line); background: #262626;
+  }
+  button.action {
     padding: 8px 16px; border-radius: 4px; border: 1px solid transparent;
     font: inherit; font-weight: 600; cursor: pointer;
   }
   .primary { background: var(--ok); color: #10241f; }
   .ghost { background: transparent; border-color: var(--line); color: var(--muted); }
   #msg { margin-left: auto; font-size: 13px; }
-  .empty { color: var(--muted); font-style: italic; }
+  /* -- about -- */
+  .about { text-align: center; padding: 28px 0 8px; }
+  .about h1 { margin: 14px 0 2px; font-size: 26px; letter-spacing: .03em; }
+  .about .tagline { color: var(--muted); margin: 0 0 4px; }
+  .about .ver { color: var(--muted); font-size: 12px; }
+  .about .body { max-width: 430px; margin: 18px auto 0; color: var(--muted); font-size: 13px; text-align: center; }
+  .about a { color: var(--accent); cursor: pointer; text-decoration: underline; }
 </style>
 </head>
 <body>
 
-<div class="panel">
-  <h2>Bridge status</h2>
-  <div><span class="dot" id="dot" style="background:var(--muted)"></span><span class="state" id="state">starting…</span></div>
-  <div id="amp" class="hint"></div>
-  <div id="radios"><p class="empty">No radios reported yet.</p></div>
-</div>
+<nav id="tabs">
+  <button data-tab="status" class="active">Status</button>
+  <button data-tab="radio">Radio</button>
+  <button data-tab="server">Server</button>
+  <button data-tab="wsjtx">WSJT-X</button>
+  <button data-tab="about">About</button>
+</nav>
 
-<div class="panel">
-  <h2>Radio</h2>
-  <div class="grid">
-    <label for="flex_host">FlexRadio address</label><input type="text" id="flex_host">
-    <label for="flex_port">API port</label><input type="number" id="flex_port">
-    <label for="radio_A">Slice A name</label><input type="text" id="radio_A">
-    <label for="radio_B">Slice B name</label><input type="text" id="radio_B">
-    <label for="tx_radio_name">TX follower name</label><input type="text" id="tx_radio_name">
-    <label for="amp_power_watts">Amp output (W)</label><input type="number" id="amp_power_watts" min="0" step="10">
+<main>
+
+<!-- ============================ Status ============================ -->
+<section class="tab active" id="tab-status">
+  <div class="panel">
+    <h2>Bridge</h2>
+    <div><span class="dot" id="dot" style="background:var(--muted)"></span><span class="state" id="state">starting…</span></div>
+    <div id="amp" class="hint"></div>
+    <div id="radios"><p class="empty">No radios reported yet.</p></div>
   </div>
-  <p class="hint">The TX follower mirrors whichever slice currently holds the transmitter — select it in Wavelog and it tracks SO2R on its own. Leave blank to disable.</p>
-  <p class="hint">Amp output is logged whenever the Power Genius is out of standby; the radio's drive power is logged when it isn't. ADIF wants a nominal figure, so this is a number you set, not a live sample.</p>
-</div>
-
-<div class="panel">
-  <h2>Wavelog</h2>
-  <div class="grid">
-    <label for="wavelog_url">Server URL</label><input type="text" id="wavelog_url">
-    <label for="api_token">API token</label><input type="password" id="api_token" autocomplete="off">
-    <label for="heartbeat_seconds">Heartbeat (s)</label><input type="number" id="heartbeat_seconds" step="1" min="1">
-    <label for="min_post_interval">Min post interval (s)</label><input type="number" id="min_post_interval" step="0.5" min="0">
-    <label for="send_power">Send TX power</label><input type="checkbox" id="send_power" style="justify-self:start;width:auto">
+  <div class="panel">
+    <h2>QSO forwarding</h2>
+    <div id="qso"><p class="empty">WSJT-X forwarding is disabled.</p></div>
   </div>
-  <p class="hint">Token is stored but never displayed. Leave blank to keep the current one. Must be a v2 token (<code>wl2_</code>) with the <code>radio:write</code> scope.</p>
-</div>
+</section>
 
-<div class="row">
-  <button class="primary" id="save">Save and restart bridge</button>
-  <button class="ghost" id="quit">Quit application</button>
+<!-- ============================ Radio ============================= -->
+<section class="tab" id="tab-radio">
+  <div class="panel">
+    <h2>Backend</h2>
+    <div class="grid">
+      <label for="radio_backend">Radio type</label>
+      <select id="radio_backend">
+        <option value="flex">FlexRadio (native TCP API)</option>
+        <option value="rigctld">Other rig via hamlib rigctld</option>
+      </select>
+    </div>
+    <p class="hint">FlexRadio gets per-slice entries, SO2R TX-follow and amplifier-aware
+    power. Everything else goes through a <code>rigctld</code> daemon — one rig, one
+    entry. rigctld ships with hamlib and comes bundled with WSJT-X.</p>
+  </div>
+
+  <div class="panel flex-only">
+    <h2>FlexRadio</h2>
+    <div class="grid">
+      <label for="flex_host">Radio address</label><input type="text" id="flex_host">
+      <label for="flex_port">API port</label><input type="number" id="flex_port">
+      <label for="radio_A">Slice A name</label><input type="text" id="radio_A">
+      <label for="radio_B">Slice B name</label><input type="text" id="radio_B">
+      <label for="tx_radio_name">TX follower name</label><input type="text" id="tx_radio_name">
+      <label for="send_power">Send TX power</label><input type="checkbox" id="send_power">
+      <label for="amp_power_watts">Amp output (W)</label><input type="number" id="amp_power_watts" min="0" step="10">
+    </div>
+    <p class="hint">The TX follower mirrors whichever slice currently holds the transmitter —
+    select it in Wavelog and it tracks SO2R on its own. Leave blank to disable.</p>
+    <p class="hint">Amp output is logged whenever the Power Genius is out of standby; the
+    radio's drive power is logged when it isn't. ADIF wants a nominal figure, so this is
+    a number you set, not a live sample.</p>
+  </div>
+
+  <div class="panel rigctld-only">
+    <h2>rigctld</h2>
+    <div class="grid">
+      <label for="rigctld_host">Daemon address</label><input type="text" id="rigctld_host">
+      <label for="rigctld_port">Port</label><input type="number" id="rigctld_port">
+      <label for="rigctld_radio_name">Radio name</label><input type="text" id="rigctld_radio_name">
+      <label for="rigctld_poll_seconds">Poll interval (s)</label><input type="number" id="rigctld_poll_seconds" step="0.5" min="0.5">
+    </div>
+    <p class="hint">Start the daemon for your rig first, e.g.
+    <code>rigctld -m 229 -r COM4</code> for an Elecraft K4. The name is how the rig
+    appears in Wavelog's radio dropdown.</p>
+  </div>
+</section>
+
+<!-- ============================ Server ============================ -->
+<section class="tab" id="tab-server">
+  <div class="panel">
+    <h2>Wavelog</h2>
+    <div class="grid">
+      <label for="wavelog_url">Server URL</label><input type="text" id="wavelog_url">
+      <label for="api_token">API token</label><input type="password" id="api_token" autocomplete="off">
+      <label for="station_profile_id">Station profile ID</label><input type="number" id="station_profile_id" min="1">
+    </div>
+    <p class="hint">Token is stored but never displayed. Leave blank to keep the current
+    one. Must be a v2 token (<code>wl2_</code>) with the <code>radio:write</code> scope —
+    plus <code>qso:write</code> if WSJT-X forwarding is on.</p>
+    <p class="hint">The station profile ID is the number in the URL when editing the
+    profile in Wavelog — QSOs are filed under it.</p>
+  </div>
+  <div class="panel">
+    <h2>Publishing</h2>
+    <div class="grid">
+      <label for="heartbeat_seconds">Heartbeat (s)</label><input type="number" id="heartbeat_seconds" step="1" min="1">
+      <label for="min_post_interval">Min post interval (s)</label><input type="number" id="min_post_interval" step="0.5" min="0">
+      <label for="auto_refresh_log">Refresh log view after a QSO</label><input type="checkbox" id="auto_refresh_log">
+    </div>
+    <p class="hint">Unchanged state is resent every heartbeat so Wavelog doesn't mark the
+    radio stale; the interval floor keeps fast tuning from hammering the API.</p>
+  </div>
+</section>
+
+<!-- ============================ WSJT-X ============================ -->
+<section class="tab" id="tab-wsjtx">
+  <div class="panel">
+    <h2>QSO forwarding</h2>
+    <div class="grid">
+      <label for="wsjtx_enabled">Forward logged QSOs</label><input type="checkbox" id="wsjtx_enabled">
+      <label for="wsjtx_bind">Listen address</label><input type="text" id="wsjtx_bind">
+      <label for="wsjtx_port">UDP port</label><input type="number" id="wsjtx_port">
+    </div>
+    <p class="hint">Match WSJT-X's <i>Settings → Reporting → UDP Server</i>
+    (default <code>127.0.0.1:2237</code>). Multiple WSJT-X instances can all send to the
+    same port — SO2R just works. QSOs that can't be delivered are spooled to disk and
+    retried, so a Wavelog outage never loses a contact.</p>
+  </div>
+</section>
+
+<!-- ============================ About ============================= -->
+<section class="tab" id="tab-about">
+  <div class="about">
+    <svg width="96" height="96" viewBox="0 0 1024 1024" aria-label="Waverider logo">
+      <rect x="0" y="0" width="1023" height="1023" rx="205" fill="#1c2632"/>
+      <path id="wavepath" fill="none" stroke="#1abc9c" stroke-width="74" stroke-linecap="round"
+            d="M143,460 C 205,330 265,330 327,438 C 395,555 455,595 522,455 C 590,315 655,290 715,512"/>
+      <circle cx="860" cy="512" r="77" fill="#ebebeb"/>
+    </svg>
+    <h1>Waverider</h1>
+    <p class="tagline">Matches your radio to your logbook.</p>
+    <p class="ver">version <span id="about_version">…</span></p>
+    <div class="body">
+      <p>Publishes rig CAT state to Wavelog and forwards WSJT-X QSOs as they happen.
+      FlexRadio natively; everything else through hamlib.</p>
+      <p><a id="repo_link">github.com/gsa700/waverider</a></p>
+      <p>MIT licence. Built in the shack by AB0R, with Claude.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <button class="action primary" id="save">Save and restart bridge</button>
+  <button class="action ghost" id="quit">Quit application</button>
   <span id="msg"></span>
-</div>
+</footer>
 
 <script>
 const $ = id => document.getElementById(id);
-const FIELDS = ["flex_host","flex_port","wavelog_url","radio_A","radio_B",
-                "tx_radio_name","amp_power_watts","heartbeat_seconds","min_post_interval"];
+
+const FIELDS = ["flex_host","flex_port","radio_A","radio_B","tx_radio_name","amp_power_watts",
+                "rigctld_host","rigctld_port","rigctld_radio_name","rigctld_poll_seconds",
+                "wavelog_url","station_profile_id","heartbeat_seconds","min_post_interval",
+                "wsjtx_bind","wsjtx_port"];
+const CHECKS = ["send_power","auto_refresh_log","wsjtx_enabled"];
+
+/* -- tabs -- */
+document.querySelectorAll("#tabs button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("#tabs button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+    btn.classList.add("active");
+    $("tab-" + btn.dataset.tab).classList.add("active");
+  });
+});
+
+/* -- backend-dependent visibility -- */
+function applyBackend() {
+  const flex = $("radio_backend").value === "flex";
+  document.querySelectorAll(".flex-only").forEach(el => el.style.display = flex ? "" : "none");
+  document.querySelectorAll(".rigctld-only").forEach(el => el.style.display = flex ? "none" : "");
+}
+$("radio_backend").addEventListener("change", applyBackend);
+applyBackend();   // hide the inactive backend's panel before config loads too
 
 function apiError(where, err) {
   const el = $("msg");
@@ -111,8 +268,11 @@ function apiError(where, err) {
 function loadConfig() {
   window.pywebview.api.get_config().then(cfg => {
     FIELDS.forEach(f => { if (cfg[f] !== null && cfg[f] !== undefined) $(f).value = cfg[f]; });
-    $("send_power").checked = !!cfg.send_power;
+    CHECKS.forEach(f => $(f).checked = !!cfg[f]);
+    $("radio_backend").value = cfg.radio_backend || "flex";
     $("api_token").placeholder = cfg.token_is_set ? "•••••••• (stored)" : "wl2_…";
+    $("about_version").textContent = cfg.app_version || "?";
+    applyBackend();
   }).catch(e => apiError("get_config", e));
 }
 
@@ -144,16 +304,33 @@ function renderStatus(s) {
   const names = Object.keys(s.radios).sort();
   if (!names.length) {
     $("radios").innerHTML = '<p class="empty">No radios reported yet.</p>';
-    return;
+  } else {
+    let html = "<table><tr><th>Radio</th><th>Frequency</th><th>Mode</th><th>Power</th><th>Updated</th></tr>";
+    for (const n of names) {
+      const r = s.radios[n];
+      html += `<tr><td>${n}</td><td class="num">${fmtFreq(r.frequency)}</td>` +
+              `<td>${r.mode || "—"}</td><td class="num">${r.power ?? "—"}</td>` +
+              `<td class="num" style="color:${ageColor(r.age)}">${r.age}s ago</td></tr>`;
+    }
+    $("radios").innerHTML = html + "</table>";
   }
-  let html = "<table><tr><th>Radio</th><th>Frequency</th><th>Mode</th><th>Power</th><th>Updated</th></tr>";
-  for (const n of names) {
-    const r = s.radios[n];
-    html += `<tr><td>${n}</td><td class="num">${fmtFreq(r.frequency)}</td>` +
-            `<td>${r.mode || "—"}</td><td class="num">${r.power ?? "—"}</td>` +
-            `<td class="num" style="color:${ageColor(r.age)}">${r.age}s ago</td></tr>`;
+
+  if (!s.qso) {
+    $("qso").innerHTML = '<p class="empty">WSJT-X forwarding is disabled.</p>';
+  } else {
+    const q = s.qso;
+    const listen = q.listening
+      ? '<span style="color:var(--ok)">listening</span>'
+      : '<span style="color:var(--bad)">not listening</span>';
+    const last = q.last_call
+      ? `${q.last_call} at ${new Date(q.last_at * 1000).toLocaleTimeString()}`
+      : "—";
+    $("qso").innerHTML =
+      `<table><tr><th>Listener</th><th>Delivered</th><th>Pending</th><th>Last QSO</th></tr>` +
+      `<tr><td>${listen}</td><td class="num">${q.delivered}</td>` +
+      `<td class="num"${q.pending ? ' style="color:var(--warn)"' : ""}>${q.pending}</td>` +
+      `<td>${last}</td></tr></table>`;
   }
-  $("radios").innerHTML = html + "</table>";
 }
 
 function poll() {
@@ -168,8 +345,9 @@ function flash(text, ok) {
 }
 
 $("save").addEventListener("click", () => {
-  const payload = { send_power: $("send_power").checked, api_token: $("api_token").value };
+  const payload = { radio_backend: $("radio_backend").value, api_token: $("api_token").value };
   FIELDS.forEach(f => payload[f] = $(f).value);
+  CHECKS.forEach(f => payload[f] = $(f).checked);
   window.pywebview.api.save_config(payload).then(res => {
     if (res.ok) { $("api_token").value = ""; loadConfig(); flash("Saved — bridge restarted", true); }
     else flash(res.error, false);
@@ -177,6 +355,7 @@ $("save").addEventListener("click", () => {
 });
 
 $("quit").addEventListener("click", () => window.pywebview.api.quit());
+$("repo_link").addEventListener("click", () => window.pywebview.api.open_repo());
 
 let started = false;
 function init() {
