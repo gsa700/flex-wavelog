@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import webbrowser
+from urllib.parse import urlparse
 
 import webview
 from webview.menu import Menu, MenuAction, MenuSeparator
@@ -202,10 +203,37 @@ class App:
         self.forwarder = self.listener = None
         if self.cfg.get("wsjtx_enabled"):
             self.forwarder = wr.QsoForwarder(self.cfg)
+            self.forwarder.on_delivered = self.on_qsos_delivered
             threading.Thread(target=self.forwarder.run, daemon=True,
                              name="qso-forwarder").start()
             self.listener = wr.WsjtxListener(self.cfg, self.forwarder)
             self.listener.start()
+
+    def on_qsos_delivered(self, count):
+        """Reload the main window after a QSO lands, so the visible log updates.
+
+        Deliberately conservative about when: only on views that are read-only
+        renderings of the log (dashboard, logbook) - reloading a page where the
+        user might be mid-keystroke in a form field would eat their input. The
+        QSO entry page is exactly the wrong place to reload, so it never
+        matches. Runs on the forwarder thread; pywebview marshals both calls
+        to the UI thread itself.
+        """
+        if not self.cfg.get("auto_refresh_log", True):
+            return
+        window = self.main_window
+        if window is None or self.quitting:
+            return
+        try:
+            url = window.get_current_url() or ""
+            path = urlparse(url).path.rstrip("/").lower()
+            base = path.rsplit("/", 1)[-1]
+            # "" covers the site root, which Wavelog lands on the dashboard.
+            if base in ("", "dashboard", "logbook", "index.php") or "logbook" in path:
+                window.evaluate_js("location.reload()")
+                log.info("Refreshed log view after %d QSO(s)", count)
+        except Exception as err:
+            log.warning("Log view refresh failed: %s", err)
 
     def stop_bridge(self):
         if self.bridge is not None:

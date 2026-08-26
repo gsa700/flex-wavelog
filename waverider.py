@@ -30,7 +30,7 @@ import time
 import urllib.error
 import urllib.request
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(HERE, "config.json")
@@ -78,6 +78,10 @@ DEFAULT_CONFIG = {
     "wsjtx_enabled": True,
     "wsjtx_bind": "127.0.0.1",
     "wsjtx_port": 2237,
+    # Desktop shell only: reload the main window after a QSO is delivered, so
+    # the log view updates without a manual refresh. Only fires while the
+    # window is on a read-only view (dashboard/logbook) - never mid-form.
+    "auto_refresh_log": True,
     # The Wavelog station profile QSOs are filed under - the number in the URL
     # when editing the profile. The API rejects profiles the token doesn't own.
     "station_profile_id": 1,
@@ -278,6 +282,10 @@ class QsoForwarder:
         self.stop_requested = False
         self.warned = set()
         self.status = {"last_call": None, "last_at": None, "delivered": 0, "pending": 0}
+        # Optional callable(count) invoked after a flush delivers QSOs. The
+        # desktop shell hooks this to refresh the log view; headless runs
+        # leave it None. Called on the forwarder thread.
+        self.on_delivered = None
         self.pending = self._load_spool()
         self.status["pending"] = len(self.pending)
 
@@ -378,6 +386,11 @@ class QsoForwarder:
             self.status["pending"] = len(self.pending)
         if done:
             log.info("Delivered %d QSO(s); %d pending", len(done), len(self.pending))
+            if self.on_delivered is not None:
+                try:
+                    self.on_delivered(len(done))
+                except Exception as err:
+                    log.warning("on_delivered hook failed: %s", err)
 
     def run(self):
         """Retry loop - flushes on submit() and every RETRY_SECONDS otherwise."""
